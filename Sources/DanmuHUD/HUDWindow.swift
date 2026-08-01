@@ -430,6 +430,8 @@ final class HUDWindow: NSWindow {
             )
             isCollapsed = true
         }
+        // 收起就彻底藏干净，别露半条弹幕在外面
+        webView.isHidden = isCollapsed
         dragOverlay?.isCollapsed = isCollapsed
         dragOverlay?.needsDisplay = true
     }

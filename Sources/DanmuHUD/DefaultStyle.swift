@@ -121,9 +121,13 @@ enum DefaultStyle {
       font-size: calc(var(--blc-font-size) - 2px) !important;
       font-weight: 500 !important;
       color: rgba(255, 255, 255, var(--blc-name-opacity)) !important;
-      margin-right: 9px !important;
+      margin-right: 6px !important;
     }
-    #author-name::after { content: none !important; }
+    /* 名字和正文之间加个冒号，不然两段文字黏在一起分不清谁说的 */
+    #author-name::after {
+      content: "：" !important;
+      opacity: 0.55;
+    }
 
     #message {
       font-size: var(--blc-font-size) !important;
