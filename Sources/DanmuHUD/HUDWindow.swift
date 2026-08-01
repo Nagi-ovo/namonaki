@@ -218,6 +218,8 @@ final class HUDWindow: NSWindow {
         let controller = webView.configuration.userContentController
         controller.removeScriptMessageHandler(forName: "danmuRects")
         controller.add(MessageRectBridge(window: self), name: "danmuRects")
+        controller.removeScriptMessageHandler(forName: "danmuHistory")
+        controller.add(HistoryBridge(), name: "danmuHistory")
         installUserScript()
     }
 
@@ -246,8 +248,53 @@ final class HUDWindow: NSWindow {
           }
           setInterval(report, 250);
           report();
+
+          // 新来的消息存一份，下次启动铺回去。带 data-history 的是上次铺回来的，
+          // 别再上报一遍，否则历史会自我复制越滚越多。
+          var seen = new WeakSet();
+          function reportNew() {
+            try {
+              var nodes = document.querySelectorAll(
+                'yt-live-chat-text-message-renderer:not([data-history]),'
+                + 'yt-live-chat-paid-message-renderer:not([data-history])'
+              );
+              for (var i = 0; i < nodes.length; i++) {
+                if (seen.has(nodes[i])) { continue; }
+                seen.add(nodes[i]);
+                window.webkit.messageHandlers.danmuHistory.postMessage(nodes[i].outerHTML);
+              }
+            } catch (e) {}
+          }
+          setInterval(reportNew, 500);
         })();
         """
+    }
+
+    /// 把上次存下来的弹幕铺回窗口，免得冷启动时一片空白
+    private func restoreHistory() {
+        let items = HistoryStore.shared.all
+        guard !items.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: items),
+              let literal = String(data: data, encoding: .utf8) else { return }
+
+        let js = """
+        (function () {
+          try {
+            var items = document.querySelector('#items');
+            if (!items || items.querySelector('[data-history]')) { return; }
+            var tmp = document.createElement('div');
+            tmp.innerHTML = \(literal).join('');
+            var frag = document.createDocumentFragment();
+            while (tmp.firstChild) {
+              var el = tmp.firstChild;
+              if (el.setAttribute) { el.setAttribute('data-history', '1'); }
+              frag.appendChild(el);
+            }
+            items.insertBefore(frag, items.firstChild);
+          } catch (e) {}
+        })();
+        """
+        webView.evaluateJavaScript(js)
     }
 
     /// 轮询鼠标位置。用轮询而不是全局事件监听，是为了不碰辅助功能权限。
@@ -428,6 +475,21 @@ extension HUDWindow: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         injectCSS()
+        // 页面刚渲染完 #items 可能还没挂上，稍等一下再铺历史
+        Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            self.restoreHistory()
+        }
+    }
+}
+
+/// 收下新弹幕的 HTML，存进历史
+private final class HistoryBridge: NSObject, WKScriptMessageHandler {
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let html = message.body as? String else { return }
+        Task { @MainActor in
+            HistoryStore.shared.append(html)
+        }
     }
 }
 

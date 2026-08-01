@@ -47,6 +47,12 @@ enum DefaultStyle {
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
+    /* 上次留下的历史消息：淡一点，和刚来的新弹幕区分开 */
+    [data-history] {
+      opacity: 0.55;
+      animation: none !important;
+    }
+
     /* ---------- 单条弹幕 ---------- */
     /* 衬底：浅色画面上光靠文字阴影读不清，垫一层深色才稳。
        叠在深色游戏画面上时，把设置里的浓度拖到 0 就完全透明。 */
