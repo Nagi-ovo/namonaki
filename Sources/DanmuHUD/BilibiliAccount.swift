@@ -1,0 +1,201 @@
+import Foundation
+import Combine
+import WebKit
+
+/// 发弹幕用的账号状态。收弹幕走 blivechat 的开放平台接口（只读），
+/// 发送必须用本人登录态，所以这里单独管一套 Cookie。
+@MainActor
+final class BilibiliAccount: ObservableObject {
+    static let shared = BilibiliAccount()
+
+    @Published private(set) var userName: String?
+    @Published private(set) var uid: Int?
+    @Published private(set) var roomID: Int?
+    @Published private(set) var lastError: String?
+
+    /// 手动指定的直播间号，留空就用登录账号自己的直播间
+    @Published var manualRoomID: String {
+        didSet { UserDefaults.standard.set(manualRoomID, forKey: "manualRoomID") }
+    }
+
+    var isLoggedIn: Bool { sessData != nil && csrf != nil }
+
+    var effectiveRoomID: Int? {
+        if let manual = Int(manualRoomID.trimmingCharacters(in: .whitespaces)), manual > 0 {
+            return manual
+        }
+        return roomID
+    }
+
+    private var sessData: String? { Keychain.get("SESSDATA") }
+    private var csrf: String? { Keychain.get("bili_jct") }
+    private var lastSentAt: Date?
+
+    private init() {
+        manualRoomID = UserDefaults.standard.string(forKey: "manualRoomID") ?? ""
+        userName = UserDefaults.standard.string(forKey: "biliUserName")
+        let savedRoom = UserDefaults.standard.integer(forKey: "biliRoomID")
+        roomID = savedRoom > 0 ? savedRoom : nil
+    }
+
+    // MARK: - 登录
+
+    /// 从登录用的 WebView 里捞出 Cookie。SESSDATA 和 bili_jct 齐了才算登录成功。
+    func adoptCookies(_ cookies: [HTTPCookie]) -> Bool {
+        let wanted = Dictionary(
+            cookies
+                .filter { $0.name == "SESSDATA" || $0.name == "bili_jct" }
+                .map { ($0.name, $0.value) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard let sess = wanted["SESSDATA"], let jct = wanted["bili_jct"],
+              !sess.isEmpty, !jct.isEmpty else { return false }
+
+        Keychain.set(sess, for: "SESSDATA")
+        Keychain.set(jct, for: "bili_jct")
+        objectWillChange.send()
+        return true
+    }
+
+    func signOut() {
+        Keychain.delete("SESSDATA")
+        Keychain.delete("bili_jct")
+        userName = nil
+        uid = nil
+        roomID = nil
+        UserDefaults.standard.removeObject(forKey: "biliUserName")
+        UserDefaults.standard.removeObject(forKey: "biliRoomID")
+        objectWillChange.send()
+    }
+
+    // MARK: - 拉取账号信息
+
+    /// 登录后查一次昵称和自己的直播间号，省得让人手填
+    func refreshProfile() async {
+        guard isLoggedIn else { return }
+        do {
+            let nav = try await getJSON("https://api.bilibili.com/x/web-interface/nav")
+            guard let data = nav["data"] as? [String: Any],
+                  let mid = data["mid"] as? Int else {
+                lastError = "登录态已失效，请重新登录"
+                return
+            }
+            uid = mid
+            userName = data["uname"] as? String
+            UserDefaults.standard.set(userName, forKey: "biliUserName")
+
+            let master = try await getJSON("https://api.live.bilibili.com/live_user/v1/Master/info?uid=\(mid)")
+            if let d = master["data"] as? [String: Any],
+               let info = d["info"] as? [String: Any],
+               let room = d["room_id"] as? Int ?? info["room_id"] as? Int, room > 0 {
+                roomID = room
+                UserDefaults.standard.set(room, forKey: "biliRoomID")
+            }
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    // MARK: - 发送
+
+    enum SendError: LocalizedError {
+        case notLoggedIn
+        case noRoom
+        case tooFast
+        case empty
+        case api(code: Int, message: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .notLoggedIn: "还没登录 B 站账号"
+            case .noRoom: "不知道要发到哪个直播间，先在设置里填直播间号"
+            case .tooFast: "发太快了，等一秒再发"
+            case .empty: "内容是空的"
+            case .api(let code, let message):
+                switch code {
+                case -101: "账号未登录，需要重新登录"
+                case -111: "登录态过期了，重新登录一次"
+                case 1003212: "这条太长了，B 站不让发"
+                case 10031: "发送频率过快，缓一下"
+                default: "发送失败（\(code)）：\(message)"
+                }
+            }
+        }
+    }
+
+    func send(_ raw: String) async throws {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw SendError.empty }
+        guard let sess = sessData, let jct = csrf else { throw SendError.notLoggedIn }
+        guard let room = effectiveRoomID else { throw SendError.noRoom }
+
+        // B 站对发送频率有限制，本地先挡一道，免得白白撞风控
+        if let last = lastSentAt, Date().timeIntervalSince(last) < 1.2 {
+            throw SendError.tooFast
+        }
+
+        var request = URLRequest(url: URL(string: "https://api.live.bilibili.com/msg/send")!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("SESSDATA=\(sess); bili_jct=\(jct)", forHTTPHeaderField: "Cookie")
+        request.setValue("https://live.bilibili.com/\(room)", forHTTPHeaderField: "Referer")
+        request.setValue("https://live.bilibili.com", forHTTPHeaderField: "Origin")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+
+        let fields: [String: String] = [
+            "bubble": "0",
+            "msg": text,
+            "color": "16777215",
+            "mode": "1",
+            "room_type": "0",
+            "jumpfrom": "0",
+            "reply_mid": "0",
+            "reply_attr": "0",
+            "replay_dmid": "",
+            "statistics": #"{"appId":100,"platform":5}"#,
+            "fontsize": "25",
+            "rnd": String(Int(Date().timeIntervalSince1970)),
+            "roomid": String(room),
+            "csrf": jct,
+            "csrf_token": jct
+        ]
+        request.httpBody = Self.formEncode(fields).data(using: .utf8)
+
+        let (data, _) = try await URLSession.shared.data(for: request)
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let code = json["code"] as? Int ?? -1
+        guard code == 0 else {
+            throw SendError.api(code: code, message: json["message"] as? String ?? "")
+        }
+        lastSentAt = Date()
+    }
+
+    // MARK: - 工具
+
+    private static let userAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+        + "(KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+
+    private static func formEncode(_ fields: [String: String]) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return fields
+            .map { key, value in
+                let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+                return "\(key)=\(encoded)"
+            }
+            .joined(separator: "&")
+    }
+
+    private func getJSON(_ urlString: String) async throws -> [String: Any] {
+        var request = URLRequest(url: URL(string: urlString)!)
+        if let sess = sessData, let jct = csrf {
+            request.setValue("SESSDATA=\(sess); bili_jct=\(jct)", forHTTPHeaderField: "Cookie")
+        }
+        request.setValue("https://live.bilibili.com", forHTTPHeaderField: "Referer")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await URLSession.shared.data(for: request)
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+}

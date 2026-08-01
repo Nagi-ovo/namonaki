@@ -6,6 +6,8 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hud: HUDWindow?
     private var settingsWindow: NSWindow?
+    private var composerWindow: NSWindow?
+    private var loginWindow: LoginWindow?
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
     private let prefs = Preferences.shared
@@ -96,6 +98,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         visible.target = self
         visible.state = (hud?.isVisible ?? false) ? .on : .off
         menu.addItem(visible)
+
+        let compose = NSMenuItem(title: "发弹幕…", action: #selector(showComposer), keyEquivalent: "d")
+        compose.target = self
+        menu.addItem(compose)
+
+        menu.addItem(.separator())
 
         let editing = NSMenuItem(title: "调整位置和大小", action: #selector(toggleEditing), keyEquivalent: "e")
         editing.target = self
@@ -193,6 +201,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func reload() {
         hud?.reload()
+    }
+
+    @objc private func showComposer() {
+        if let composerWindow {
+            composerWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let controller = NSHostingController(rootView: ComposerView())
+        let window = NSWindow(contentViewController: controller)
+        window.title = "发弹幕"
+        window.styleMask = [.titled, .closable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        composerWindow = window
+    }
+
+    func showLogin() {
+        if let loginWindow {
+            loginWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let window = LoginWindow { [weak self] in
+            self?.loginWindow = nil
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        loginWindow = window
     }
 
     @objc private func showSettings() {

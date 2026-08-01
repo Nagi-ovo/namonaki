@@ -10,6 +10,8 @@ struct SettingsView: View {
                 .tabItem { Label("弹幕", systemImage: "textformat.size") }
             WindowTab()
                 .tabItem { Label("窗口", systemImage: "macwindow") }
+            AccountTab()
+                .tabItem { Label("账号", systemImage: "person.crop.circle") }
             StyleTab()
                 .tabItem { Label("CSS", systemImage: "curlybraces") }
         }
@@ -299,6 +301,68 @@ private struct WindowTab: View {
             }
         }
         .toggleStyle(.switch)
+    }
+}
+
+// MARK: - 账号（发弹幕用）
+
+private struct AccountTab: View {
+    @ObservedObject private var account = BilibiliAccount.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(account.isLoggedIn ? Color.green : Color.secondary.opacity(0.4))
+                    .frame(width: 8, height: 8)
+                Text(account.isLoggedIn
+                     ? (account.userName.map { "已登录：\($0)" } ?? "已登录")
+                     : "未登录")
+                    .font(.system(size: 13, weight: .medium))
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Button(account.isLoggedIn ? "重新登录" : "登录 B 站账号") {
+                    (NSApp.delegate as? AppDelegate)?.showLogin()
+                }
+                if account.isLoggedIn {
+                    Button("退出登录") { account.signOut() }
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("发送到哪个直播间")
+                    .font(.system(size: 13, weight: .medium))
+                TextField(
+                    "",
+                    text: $account.manualRoomID,
+                    prompt: Text(account.roomID.map { "留空就用你自己的直播间 \($0)" } ?? "填直播间号")
+                )
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
+                Text("登录后会自动认出你自己的直播间。想发到别人的直播间就在这里填房间号。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let error = account.lastError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Text("登录凭证存在系统钥匙串里，不会写进配置文件，也不上传任何地方。发送走 B 站官方接口，本地限速每秒最多一条，避免撞风控。收弹幕仍然走 blivechat 的只读接口，和这套登录无关。")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
