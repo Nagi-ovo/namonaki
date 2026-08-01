@@ -56,6 +56,14 @@ enum DefaultStyle {
       width: 100% !important;
     }
 
+    /* blivechat 靠顶部内边距把消息推到底部（聊天室常见做法）。
+       历史容器插在它上面时，那块内边距就露成一大片空白了。 */
+    #item-offset {
+      padding-top: 0 !important;
+      margin-top: 0 !important;
+      min-height: 0 !important;
+    }
+
     /* 上次留下的历史消息。别靠调淡来区分——那看着像没加载完，
        改成在末尾画一条分隔线说明「以下是本次的」。 */
     [data-history] {
