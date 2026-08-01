@@ -123,10 +123,24 @@ enum DefaultStyle {
       color: rgba(255, 255, 255, var(--blc-name-opacity)) !important;
       margin-right: 6px !important;
     }
-    /* 名字和正文之间加个冒号，不然两段文字黏在一起分不清谁说的 */
+    /* 名字和正文之间加个冒号，不然两段文字黏在一起分不清谁说的。
+       冒号跟着正文走，不染身份色。 */
     #author-name::after {
       content: "：" !important;
-      opacity: 0.55;
+      color: rgba(255, 255, 255, 0.45) !important;
+      font-weight: 400 !important;
+    }
+
+    /* blivechat 给主播、房管这些身份加了背景色块，太抢眼。
+       身份只用文字颜色表达就够了。 */
+    #author-name,
+    yt-live-chat-text-message-renderer[author-type] #author-name,
+    yt-live-chat-text-message-renderer[blc-guard-level] #author-name {
+      background: none !important;
+      background-color: transparent !important;
+      padding: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
     }
 
     #message {
