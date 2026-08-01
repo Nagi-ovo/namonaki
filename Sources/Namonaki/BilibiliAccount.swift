@@ -265,11 +265,14 @@ final class BilibiliAccount: ObservableObject {
         case .roomEmoticon:
             try await send(emoticon.id, dmType: 1)
         case .textToken:
-            try await send(emoticon.text, dmType: 0)
+            // 不能传 dm_type=0——那等于告诉服务端「这是纯文本」，
+            // 它就不再把 [MyGO_喜欢抹茶] 替换成表情图了。官方发普通弹幕
+            // 时压根不带这个字段。
+            try await send(emoticon.text)
         }
     }
 
-    func send(_ raw: String, dmType: Int = 0) async throws {
+    func send(_ raw: String, dmType: Int? = nil) async throws {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw SendError.empty }
         guard let sess = sessData, let jct = csrf else { throw SendError.notLoggedIn }
@@ -288,9 +291,8 @@ final class BilibiliAccount: ObservableObject {
         request.setValue("https://live.bilibili.com", forHTTPHeaderField: "Origin")
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
 
-        let fields: [String: String] = [
+        var fields: [String: String] = [
             "bubble": "0",
-            "dm_type": String(dmType),
             "msg": text,
             "color": "16777215",
             "mode": "1",
@@ -306,6 +308,9 @@ final class BilibiliAccount: ObservableObject {
             "csrf": jct,
             "csrf_token": jct
         ]
+        if let dmType {
+            fields["dm_type"] = String(dmType)
+        }
         request.httpBody = Self.formEncode(fields).data(using: .utf8)
 
         let (data, _) = try await URLSession.shared.data(for: request)
