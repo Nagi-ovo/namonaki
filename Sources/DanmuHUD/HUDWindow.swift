@@ -150,6 +150,13 @@ final class HUDWindow: NSWindow {
         var items = comps.queryItems ?? []
         items.removeAll { $0.name == "showDebugMessages" }
         items.append(URLQueryItem(name: "showDebugMessages", value: prefs.showDebugMessages ? "true" : "false"))
+
+        // 同一个身份码不能同时开多个直连（OBS 的浏览器源 + 这个窗口就会打架，
+        // B 站会把 session 踢掉）。走服务器转发的话，blivechat 后端只占一个名额，
+        // 前端要开几个都行。
+        items.removeAll { $0.name == "relayMessagesByServer" }
+        items.append(URLQueryItem(name: "relayMessagesByServer", value: "true"))
+
         comps.queryItems = items
         return comps.url
     }
