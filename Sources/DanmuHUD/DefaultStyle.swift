@@ -47,6 +47,14 @@ enum DefaultStyle {
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
+    /* 历史消息容器。它不归 blivechat 管，得自己声明布局，
+       否则会被当成行内元素塌掉。 */
+    #blc-history {
+      display: block !important;
+      position: relative !important;
+      width: 100% !important;
+    }
+
     /* 上次留下的历史消息：淡一点，和刚来的新弹幕区分开 */
     [data-history] {
       opacity: 0.55;

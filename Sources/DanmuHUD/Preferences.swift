@@ -8,7 +8,7 @@ final class Preferences: ObservableObject {
     static let shared = Preferences()
 
     /// 内置样式表每次改版就 +1
-    private static let currentCSSVersion = 5
+    private static let currentCSSVersion = 6
 
     @Published var roomURL: String {
         didSet { defaults.set(roomURL, forKey: Keys.roomURL) }

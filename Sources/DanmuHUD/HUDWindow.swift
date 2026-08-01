@@ -277,24 +277,59 @@ final class HUDWindow: NSWindow {
               let data = try? JSONSerialization.data(withJSONObject: items),
               let literal = String(data: data, encoding: .utf8) else { return }
 
-        // 不能直接塞进 #items——那是 Vue 管的，下次重渲染就把我们的节点抹掉了。
-        // 单独造一个容器插在它前面，框架不碰，历史就留得住。
+        // 页面初始化会清空消息区，插进去的历史转眼就没了。
+        // 所以插完还要盯着：被清掉就重新插回来，直到有真弹幕进来为止。
         let js = """
         (function () {
           try {
+            var scroller = document.querySelector('#item-scroller');
             var items = document.querySelector('#items');
-            if (!items || !items.parentNode) { return 'no-items'; }
-            var host = document.getElementById('blc-history');
-            if (host) { return 'already'; }
-            host = document.createElement('div');
-            host.id = 'blc-history';
-            host.innerHTML = \(literal).join('');
-            var nodes = host.children;
-            for (var i = 0; i < nodes.length; i++) {
-              nodes[i].setAttribute('data-history', '1');
+            if (!items) { return 'no-items'; }
+
+            function build() {
+              var host = document.createElement('div');
+              host.id = 'blc-history';
+              host.innerHTML = \(literal).join('');
+              for (var i = 0; i < host.children.length; i++) {
+                host.children[i].setAttribute('data-history', '1');
+              }
+              return host;
             }
-            items.parentNode.insertBefore(host, items);
-            return 'ok:' + nodes.length;
+
+            // #items 的高度由 blivechat 用 JS 控着（滚动动画要用），
+            // 塞进去的内容撑不开它，整块就塌成 0 高。
+            // 插到滚动容器里、它管辖的 #item-offset 之前，才能正常占位。
+            function place() {
+              if (document.getElementById('blc-history')) { return; }
+              var sc = document.querySelector('#item-scroller');
+              var offset = document.querySelector('#item-offset');
+              if (!sc || !offset) { return; }
+              sc.insertBefore(build(), offset);
+              sc.scrollTop = sc.scrollHeight;
+            }
+
+            place();
+
+            // 页面把它抹掉就再放一次，最多补 20 次，避免无限打架
+            var tries = 0;
+            var guard = setInterval(function () {
+              if (tries++ > 20) { clearInterval(guard); return; }
+              place();
+            }, 400);
+
+            var host = document.getElementById('blc-history');
+            var first = host && host.children[0];
+            return JSON.stringify({
+              placed: !!host,
+              kids: host ? host.children.length : -1,
+              hostH: host ? host.getBoundingClientRect().height : -1,
+              hostDisplay: host ? getComputedStyle(host).display : '',
+              firstTag: first ? first.tagName : '',
+              firstH: first ? first.getBoundingClientRect().height : -1,
+              firstDisplay: first ? getComputedStyle(first).display : '',
+              itemsDisplay: getComputedStyle(items).display,
+              itemsH: items.getBoundingClientRect().height
+            });
           } catch (e) { return 'error:' + e.message; }
         })();
         """
