@@ -14,6 +14,12 @@ struct ComposerView: View {
         nonmutating set { model.text = newValue }
     }
 
+    /// B 站普通用户的弹幕上限是 20 字。超了服务端会返回 1003212，
+    /// 但那时候话已经打完了，白等一轮——不如在这儿就拦住。
+    private let maxLength = 20
+
+    private var overLimit: Bool { model.text.count > maxLength }
+
     private enum Status: Equatable {
         case idle
         case sending
@@ -29,6 +35,15 @@ struct ComposerView: View {
                     .font(.system(size: 15))
                     .focused($focused)
                     .onSubmit { submit() }
+                    // @某某 是一个整体，删的时候应该一次删掉，
+                    // 而不是让人按十几下退格
+                    .onKeyPress(.delete) {
+                        guard let range = model.text.range(
+                            of: #"@[^\s@]+\s?$"#, options: .regularExpression
+                        ) else { return .ignored }
+                        model.text.removeSubrange(range)
+                        return .handled
+                    }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
                     .background(
@@ -60,7 +75,7 @@ struct ComposerView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty || status == .sending)
+                .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty || status == .sending || overLimit)
             }
 
             HStack(spacing: 6) {
@@ -84,9 +99,9 @@ struct ComposerView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                Text("\(text.count)/20")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(text.count > 20 ? Color.orange : Color.secondary.opacity(0.6))
+                Text("\(text.count)/\(maxLength)")
+                    .font(.system(size: 10, weight: overLimit ? .semibold : .regular, design: .monospaced))
+                    .foregroundStyle(overLimit ? Color.orange : Color.secondary.opacity(0.6))
             }
         }
         .padding(14)
@@ -99,6 +114,7 @@ struct ComposerView: View {
     }
 
     private var hint: String {
+        if overLimit { return "超出 \(model.text.count - maxLength) 字，发不出去" }
         guard account.isLoggedIn else { return "还没登录，去设置里登录 B 站账号" }
         guard let room = account.effectiveRoomID else { return "还没设置直播间号" }
         let who = account.userName.map { "以 \($0) 的身份" } ?? ""
@@ -122,6 +138,10 @@ struct ComposerView: View {
     private func submit() {
         let content = text
         guard !content.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        guard !overLimit else {
+            status = .failed("超出 \(content.count - maxLength) 字，B 站最多 \(maxLength) 字")
+            return
+        }
         status = .sending
         Task {
             do {
