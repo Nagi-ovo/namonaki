@@ -55,10 +55,21 @@ enum DefaultStyle {
       width: 100% !important;
     }
 
-    /* 上次留下的历史消息：淡一点，和刚来的新弹幕区分开 */
+    /* 上次留下的历史消息。别靠调淡来区分——那看着像没加载完，
+       改成在末尾画一条分隔线说明「以下是本次的」。 */
     [data-history] {
-      opacity: 0.55;
       animation: none !important;
+    }
+    #blc-history::after {
+      content: "以上是上次的记录";
+      display: block;
+      margin: 10px 14px 4px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.16);
+      color: rgba(255, 255, 255, 0.38);
+      font-size: 11px;
+      text-align: center;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
     /* ---------- 单条弹幕 ---------- */
