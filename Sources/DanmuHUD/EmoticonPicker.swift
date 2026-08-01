@@ -44,6 +44,7 @@ struct EmoticonPicker: View {
     private let columns = [GridItem(.adaptive(minimum: 54), spacing: 8)]
 
     @State private var selectedPack: String?
+    @State private var hovered: BilibiliAccount.Emoticon?
 
     private var currentPack: BilibiliAccount.EmotePack? {
         account.packs.first { $0.id == selectedPack } ?? account.packs.first
@@ -53,53 +54,80 @@ struct EmoticonPicker: View {
         if account.packs.isEmpty {
             legacyBody
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                // 包切换：横着滚，16 个包塞不下就滑
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
-                        ForEach(account.packs) { pack in
-                            Button {
-                                selectedPack = pack.id
-                            } label: {
-                                Text(pack.name)
-                                    .font(.system(size: 11))
-                                    .padding(.horizontal, 9)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(pack.id == currentPack?.id
-                                                  ? Color.accentColor.opacity(0.85)
-                                                  : Color.secondary.opacity(0.12))
-                                    )
-                                    .foregroundStyle(pack.id == currentPack?.id ? .white : .primary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(10)
-                }
-
+            VStack(spacing: 0) {
+                packTabs
                 Divider()
-
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(currentPack?.items ?? []) { emoticon in
-                            Button {
-                                guard !emoticon.locked else { return }
-                                onPick(emoticon)
-                            } label: {
-                                cell(emoticon)
-                            }
-                            .buttonStyle(.plain)
-                            .help(emoticon.descript)
-                        }
-                    }
-                    .padding(10)
-                }
-                .frame(height: 240)
+                grid
+                Divider()
+                footer
             }
-            .frame(width: 340)
+            // 必须钉死尺寸：popover 的大小由内容决定，不给约束的话
+            // 网格会一路把它撑开，反而滚不动
+            .frame(width: 360, height: 380)
         }
+    }
+
+    private var packTabs: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) {
+                ForEach(account.packs) { pack in
+                    let active = pack.id == currentPack?.id
+                    Button {
+                        selectedPack = pack.id
+                    } label: {
+                        Text(pack.name)
+                            .font(.system(size: 11, weight: active ? .semibold : .regular))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule().fill(
+                                    active ? Color.accentColor : Color.secondary.opacity(0.12)
+                                )
+                            )
+                            .foregroundStyle(active ? .white : .primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+        }
+        .frame(height: 42)
+    }
+
+    private var grid: some View {
+        ScrollView(.vertical) {
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(currentPack?.items ?? []) { emoticon in
+                    Button {
+                        guard !emoticon.locked else { return }
+                        onPick(emoticon)
+                    } label: {
+                        cell(emoticon)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in
+                        hovered = hovering ? emoticon : (hovered == emoticon ? nil : hovered)
+                    }
+                }
+            }
+            .padding(10)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var footer: some View {
+        HStack {
+            Text(hovered?.descript ?? currentPack.map { "\($0.name) · \($0.items.count) 个" } ?? "")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
     }
 
     private var legacyBody: some View {
@@ -142,7 +170,12 @@ struct EmoticonPicker: View {
 
     private func cell(_ emoticon: BilibiliAccount.Emoticon) -> some View {
         CachedImage(url: emoticon.url)
-            .frame(width: 48, height: 48)
+            .frame(width: 46, height: 46)
+            .padding(3)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(hovered == emoticon ? Color.accentColor.opacity(0.16) : Color.clear)
+            )
         .opacity(emoticon.locked ? 0.3 : 1)
         .overlay(alignment: .bottomTrailing) {
             if emoticon.locked {
