@@ -12,7 +12,7 @@ import Foundation
 enum Keychain {
     private static let directory: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("DanmuHUD", isDirectory: true)
+        return base.appendingPathComponent("Namonaki", isDirectory: true)
     }()
 
     private static let file = directory.appendingPathComponent("credentials.json")

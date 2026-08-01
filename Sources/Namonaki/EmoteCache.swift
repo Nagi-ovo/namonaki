@@ -7,7 +7,7 @@ enum EmoteCache {
     private static let file: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base
-            .appendingPathComponent("DanmuHUD", isDirectory: true)
+            .appendingPathComponent("Namonaki", isDirectory: true)
             .appendingPathComponent("emotes.json")
     }()
 

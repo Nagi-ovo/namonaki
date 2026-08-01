@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>DanmuHUD</string>
+    <string>Namonaki</string>
     <key>CFBundleDisplayName</key>
     <string>弹幕窗</string>
     <key>CFBundleIdentifier</key>
-    <string>fun.nagi.danmuhud</string>
+    <string>fun.nagi.namonaki</string>
     <key>CFBundleExecutable</key>
-    <string>DanmuHUD</string>
+    <string>Namonaki</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

@@ -464,7 +464,7 @@ final class HUDWindow: NSWindow {
         installUserScript()
         webView.evaluateJavaScript(cssInjectionJS) { _, error in
             if let error {
-                NSLog("[DanmuHUD] CSS 注入失败: \(error.localizedDescription)")
+                NSLog("[Namonaki] CSS 注入失败: \(error.localizedDescription)")
             }
         }
     }

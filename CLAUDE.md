@@ -1,4 +1,4 @@
-# DanmuHUD
+# Namonaki
 
 macOS 菜单栏 app，在桌面上悬浮一个 B 站直播弹幕窗。AppKit 写窗口，内嵌 WKWebView
 加载本地 blivechat 的房间页，样式靠注入 CSS 控制。
@@ -6,8 +6,8 @@ macOS 菜单栏 app，在桌面上悬浮一个 B 站直播弹幕窗。AppKit 写
 ## 跑起来
 
 ```
-./build.sh          # swift build + 组 .app + 本地签名，产物在 build/DanmuHUD.app
-pkill -x DanmuHUD; open build/DanmuHUD.app    # 双击不会重启已在运行的实例，必须先杀
+./build.sh          # swift build + 组 .app + 本地签名，产物在 build/Namonaki.app
+pkill -x Namonaki; open build/Namonaki.app    # 双击不会重启已在运行的实例，必须先杀
 ```
 
 依赖 blivechat 服务器跑在 `127.0.0.1:12450`（源码在 `../blivechat`）：
@@ -53,7 +53,7 @@ Info.plist 里 `NSPrefersDisplaySafeAreaCompatibilityMode = false`（关掉刘�
 在 https://play-live.bilibili.com/ 拿，12–14 位大写字母数字。**等同密码**，房间 URL 里
 就带着它，日志和截图都要脱敏。刷新会让旧的立刻作废，换了之后 app 和 OBS 两边都要重新粘。
 
-排查时不要 `defaults read fun.nagi.danmuhud`——会把带身份码的 roomURL 整条打出来。
+排查时不要 `defaults read fun.nagi.namonaki`——会把带身份码的 roomURL 整条打出来。
 
 ## 发弹幕
 

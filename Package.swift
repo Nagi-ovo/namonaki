@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "DanmuHUD",
+    name: "Namonaki",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "DanmuHUD",
-            path: "Sources/DanmuHUD"
+            name: "Namonaki",
+            path: "Sources/Namonaki"
         )
     ]
 )

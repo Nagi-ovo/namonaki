@@ -1,9 +1,9 @@
 import Foundation
 
 /// 双击启动的 app 看不到终端输出，调试信息写文件最省事。
-/// 日志在 /tmp/danmuhud.log
+/// 日志在 /tmp/namonaki.log
 enum Log {
-    private static let path = "/tmp/danmuhud.log"
+    private static let path = "/tmp/namonaki.log"
 
     static func write(_ message: String) {
         let line = "\(Date().formatted(date: .omitted, time: .standard)) \(message)\n"

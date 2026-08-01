@@ -1,4 +1,4 @@
-# 弹幕窗 DanmuHUD
+# 弹幕窗 Namonaki
 
 macOS 上的 B 站直播弹幕悬浮窗。原生 AppKit 写的，平时对鼠标完全隐形，不挡你干活；
 右键弹幕可以直接回复，还能发表情。
@@ -35,14 +35,14 @@ cd .. && uv run main.py --host 127.0.0.1 --port 12450
 2. 打开「**通过服务器转发消息**」——不开的话这个 app 和 OBS 会抢同一个连接名额，互相把对方踢掉
 3. 点「复制房间URL」
 
-## 装 DanmuHUD
+## 装 Namonaki
 
 需要 Xcode（Swift 6+）：
 
 ```sh
-git clone <this repo> && cd DanmuHUD
+git clone <this repo> && cd Namonaki
 ./build.sh
-open build/DanmuHUD.app
+open build/Namonaki.app
 ```
 
 第一次打开会自动弹设置面板，把刚才复制的房间地址粘进去就出弹幕了。
@@ -54,7 +54,7 @@ open build/DanmuHUD.app
 
 ## 想发弹幕的话
 
-设置 → 账号 → 登录 B 站，扫码即可。登录凭证存在本机文件里（`~/Library/Application Support/DanmuHUD/`，
+设置 → 账号 → 登录 B 站，扫码即可。登录凭证存在本机文件里（`~/Library/Application Support/Namonaki/`，
 权限 0600），不上传任何地方。发送走 B 站官方接口，本地限速每秒一条避免撞风控。
 
 **收弹幕和发弹幕是两条独立的路**：收走 blivechat 的开放平台接口（只读，认身份码），
