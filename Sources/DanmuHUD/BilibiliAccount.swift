@@ -108,15 +108,31 @@ final class BilibiliAccount: ObservableObject {
     // MARK: - 表情
 
     struct Emoticon: Identifiable, Hashable {
-        let id: String        // emoticon_unique，发送时当 msg 用
-        let text: String      // 触发词，形如 [妙]
+        /// 两类表情的发送方式完全不同
+        enum Kind: Hashable {
+            /// 直播间表情包：msg 传 emoticon_unique，配 dm_type=1
+            case roomEmoticon
+            /// 装扮表情：msg 就是触发词文本（如 [MyGO_喜欢抹茶]），服务端自己换成图
+            case textToken
+        }
+
+        let id: String        // roomEmoticon 用 emoticon_unique；textToken 用触发词
+        let text: String      // 触发词
         let url: String
         let descript: String
+        let kind: Kind
         /// 没解锁的表情发出去会被服务端拒绝，先在界面上标出来
         let locked: Bool
     }
 
+    struct EmotePack: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let items: [Emoticon]
+    }
+
     @Published private(set) var emoticons: [Emoticon] = []
+    @Published private(set) var packs: [EmotePack] = []
 
     /// 拉取当前直播间可用的表情包。要登录，而且不同直播间的表情不一样。
     func refreshEmoticons() async {
@@ -138,10 +154,52 @@ final class BilibiliAccount: ObservableObject {
                     text: item["emoji"] as? String ?? "",
                     url: Self.httpsURL(item["url"] as? String ?? ""),
                     descript: item["descript"] as? String ?? "",
+                    kind: .roomEmoticon,
                     locked: perm == 0
                 )
             }
         }
+
+        await refreshUserPacks()
+    }
+
+    /// 拉账号自己拥有的装扮表情包。这些在弹幕里是纯文本触发词，
+    /// 服务端收到 [MyGO_喜欢抹茶] 这样的字符串会自己换成图片，
+    /// 所以跟直播间表情走的是完全不同的发送路径。
+    private func refreshUserPacks() async {
+        guard let json = try? await getJSON(
+            "https://api.bilibili.com/x/emote/user/panel/web?business=reply"
+        ),
+        let data = json["data"] as? [String: Any],
+        let list = data["packages"] as? [[String: Any]] else { return }
+
+        var result: [EmotePack] = []
+        if !emoticons.isEmpty {
+            result.append(EmotePack(id: "room", name: "直播间", items: emoticons))
+        }
+
+        for pack in list {
+            let name = pack["text"] as? String ?? "表情"
+            let raw = pack["emote"] as? [[String: Any]] ?? []
+            let items = raw.compactMap { item -> Emoticon? in
+                guard let token = item["text"] as? String, !token.isEmpty else { return nil }
+                let url = (item["url"] as? String)
+                    ?? ((item["meta"] as? [String: Any])?["gif_url"] as? String)
+                    ?? ""
+                return Emoticon(
+                    id: token,
+                    text: token,
+                    url: Self.httpsURL(url),
+                    descript: token,
+                    kind: .textToken,
+                    locked: false
+                )
+            }
+            guard !items.isEmpty else { continue }
+            result.append(EmotePack(id: "\(pack["id"] ?? name)", name: name, items: items))
+        }
+
+        packs = result
     }
 
     // MARK: - 发送
@@ -171,9 +229,13 @@ final class BilibiliAccount: ObservableObject {
         }
     }
 
-    /// 发大表情：msg 传表情的 emoticon_unique，再用 dm_type=1 告诉服务端这是表情
     func send(emoticon: Emoticon) async throws {
-        try await send(emoticon.id, dmType: 1)
+        switch emoticon.kind {
+        case .roomEmoticon:
+            try await send(emoticon.id, dmType: 1)
+        case .textToken:
+            try await send(emoticon.text, dmType: 0)
+        }
     }
 
     func send(_ raw: String, dmType: Int = 0) async throws {

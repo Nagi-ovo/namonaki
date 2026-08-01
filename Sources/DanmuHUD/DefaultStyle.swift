@@ -131,15 +131,19 @@ enum DefaultStyle {
     }
 
     /* ---------- 表情 ---------- */
+    /* 只锁高度，宽度交给 auto——写死宽高会把非正方形的表情压变形 */
     .emoji {
-      width: calc(var(--blc-font-size) + 1px) !important;
-      height: calc(var(--blc-font-size) + 1px) !important;
+      height: calc(var(--blc-font-size) + 2px) !important;
+      width: auto !important;
+      max-width: none !important;
       vertical-align: -4px !important;
       margin: 0 2px !important;
+      object-fit: contain !important;
     }
     .blc-large-emoji {
-      width: 64px !important;
-      height: 64px !important;
+      height: 60px !important;
+      width: auto !important;
+      max-width: 100% !important;
       vertical-align: middle !important;
     }
 

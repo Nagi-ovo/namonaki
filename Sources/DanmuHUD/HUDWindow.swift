@@ -277,24 +277,30 @@ final class HUDWindow: NSWindow {
               let data = try? JSONSerialization.data(withJSONObject: items),
               let literal = String(data: data, encoding: .utf8) else { return }
 
+        // 不能直接塞进 #items——那是 Vue 管的，下次重渲染就把我们的节点抹掉了。
+        // 单独造一个容器插在它前面，框架不碰，历史就留得住。
         let js = """
         (function () {
           try {
             var items = document.querySelector('#items');
-            if (!items || items.querySelector('[data-history]')) { return; }
-            var tmp = document.createElement('div');
-            tmp.innerHTML = \(literal).join('');
-            var frag = document.createDocumentFragment();
-            while (tmp.firstChild) {
-              var el = tmp.firstChild;
-              if (el.setAttribute) { el.setAttribute('data-history', '1'); }
-              frag.appendChild(el);
+            if (!items || !items.parentNode) { return 'no-items'; }
+            var host = document.getElementById('blc-history');
+            if (host) { return 'already'; }
+            host = document.createElement('div');
+            host.id = 'blc-history';
+            host.innerHTML = \(literal).join('');
+            var nodes = host.children;
+            for (var i = 0; i < nodes.length; i++) {
+              nodes[i].setAttribute('data-history', '1');
             }
-            items.insertBefore(frag, items.firstChild);
-          } catch (e) {}
+            items.parentNode.insertBefore(host, items);
+            return 'ok:' + nodes.length;
+          } catch (e) { return 'error:' + e.message; }
         })();
         """
-        webView.evaluateJavaScript(js)
+        webView.evaluateJavaScript(js) { result, error in
+            Log.write("restoreHistory -> \(result ?? "nil") error=\(error?.localizedDescription ?? "none")")
+        }
     }
 
     /// 轮询鼠标位置。用轮询而不是全局事件监听，是为了不碰辅助功能权限。
