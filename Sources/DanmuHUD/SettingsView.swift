@@ -239,17 +239,6 @@ private struct DanmakuTab: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("头像大小")
-                        .font(.system(size: 13, weight: .medium))
-                    Spacer()
-                    Text("\(Int(prefs.avatarSize))px")
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                Slider(value: $prefs.avatarSize, in: 16...48, step: 1)
-            }
 
             Button("回到「\(preset.title)」的默认值") {
                 prefs.apply(preset)

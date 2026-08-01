@@ -10,7 +10,8 @@ enum DefaultStyle {
     :root {
       --blc-font-size: 21px;
       --blc-name-opacity: 0.75;
-      --blc-avatar-size: 26px;
+      /* 头像跟着字号走，不单独调——两根滑杆互相打架没意义 */
+      --blc-avatar-size: calc(var(--blc-font-size) * 1.3);
       --blc-backdrop-alpha: 0.38;
     }
 
@@ -77,7 +78,9 @@ enum DefaultStyle {
        叠在深色游戏画面上时，把设置里的浓度拖到 0 就完全透明。 */
     yt-live-chat-text-message-renderer {
       display: flex !important;
-      align-items: flex-start !important;
+      /* 居中而不是顶对齐：单行时顶对齐看着头像总是偏上，
+         有大表情时落差更明显 */
+      align-items: center !important;
       padding: 7px 12px !important;
       margin: 3px 8px !important;
       border-radius: 9px !important;

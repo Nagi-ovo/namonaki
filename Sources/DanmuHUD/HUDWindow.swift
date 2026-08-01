@@ -153,13 +153,13 @@ final class HUDWindow: NSWindow {
             .sink { [weak self] _ in self?.injectCSS() }
             .store(in: &cancellables)
 
-        // 字号 / 用户名清晰度 / 头像大小 / 衬底浓度，拖滑杆要立刻看到变化
-        Publishers.CombineLatest4(
-            prefs.$fontSize, prefs.$nameOpacity, prefs.$avatarSize, prefs.$backdropAlpha
+        // 字号 / 用户名清晰度 / 衬底浓度，拖滑杆要立刻看到变化（头像跟字号联动）
+        Publishers.CombineLatest3(
+            prefs.$fontSize, prefs.$nameOpacity, prefs.$backdropAlpha
         )
         .dropFirst()
         .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
-        .sink { [weak self] _, _, _, _ in self?.injectCSS() }
+        .sink { [weak self] _, _, _ in self?.injectCSS() }
         .store(in: &cancellables)
 
         prefs.$showOutline

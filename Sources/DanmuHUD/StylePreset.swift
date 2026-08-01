@@ -41,13 +41,6 @@ enum StylePreset: String, CaseIterable, Identifiable {
         }
     }
 
-    var avatarSize: Double {
-        switch self {
-        case .restrained: 26
-        case .highContrast: 28
-        case .minimal: 0
-        }
-    }
 
     var backdropAlpha: Double {
         switch self {

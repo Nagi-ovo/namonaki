@@ -8,7 +8,7 @@ final class Preferences: ObservableObject {
     static let shared = Preferences()
 
     /// 内置样式表每次改版就 +1
-    private static let currentCSSVersion = 9
+    private static let currentCSSVersion = 10
 
     @Published var roomURL: String {
         didSet { defaults.set(roomURL, forKey: Keys.roomURL) }
@@ -35,9 +35,6 @@ final class Preferences: ObservableObject {
     @Published var nameOpacity: Double {
         didSet { defaults.set(nameOpacity, forKey: Keys.nameOpacity) }
     }
-    @Published var avatarSize: Double {
-        didSet { defaults.set(avatarSize, forKey: Keys.avatarSize) }
-    }
     /// 每条弹幕背后垫的深色衬底浓度。0 = 全透明，靠阴影撑；
     /// 浅色桌面上调到 0.4 左右才读得清。
     @Published var backdropAlpha: Double {
@@ -58,7 +55,6 @@ final class Preferences: ObservableObject {
         :root {
           --blc-font-size: \(Int(fontSize))px;
           --blc-name-opacity: \(String(format: "%.2f", nameOpacity));
-          --blc-avatar-size: \(Int(avatarSize))px;
           --blc-backdrop-alpha: \(String(format: "%.2f", backdropAlpha));
         }
         """
@@ -77,7 +73,6 @@ final class Preferences: ObservableObject {
         static let frame = "windowFrame"
         static let fontSize = "fontSize"
         static let nameOpacity = "nameOpacity"
-        static let avatarSize = "avatarSize"
         static let backdropAlpha = "backdropAlpha"
         static let showDebugMessages = "showDebugMessages"
         static let showOutline = "showOutline"
@@ -93,7 +88,6 @@ final class Preferences: ObservableObject {
         bookmarkFrame = defaults.string(forKey: Keys.bookmarkFrame) ?? ""
         fontSize = defaults.object(forKey: Keys.fontSize) as? Double ?? 21
         nameOpacity = defaults.object(forKey: Keys.nameOpacity) as? Double ?? 0.75
-        avatarSize = defaults.object(forKey: Keys.avatarSize) as? Double ?? 26
         backdropAlpha = defaults.object(forKey: Keys.backdropAlpha) as? Double ?? 0.38
         showDebugMessages = defaults.bool(forKey: Keys.showDebugMessages)
         showOutline = defaults.bool(forKey: Keys.showOutline)
@@ -129,7 +123,6 @@ final class Preferences: ObservableObject {
         customCSS = preset.css
         fontSize = preset.fontSize
         nameOpacity = preset.nameOpacity
-        avatarSize = preset.avatarSize
         backdropAlpha = preset.backdropAlpha
     }
 }
