@@ -305,10 +305,6 @@ final class HUDWindow: NSWindow {
         let js = """
         (function () {
           try {
-            var scroller = document.querySelector('#item-scroller');
-            var items = document.querySelector('#items');
-            if (!items) { return 'no-items'; }
-
             function build() {
               var host = document.createElement('div');
               host.id = 'blc-history';
@@ -319,16 +315,96 @@ final class HUDWindow: NSWindow {
               return host;
             }
 
+            // 历史是 #items 的兄弟，blivechat 用 #items 自身高度判断是否需要滚动，
+            // 因而本次消息还不够一屏时会漏掉 scrollToBottom()。这里补齐这一种布局，
+            // 但跟随状态由用户滚动意图控制，往上翻历史时绝不强制拉回底部。
+            function installHistoryAutoFollow(sc, liveItems) {
+              var old = sc.__blcHistoryAutoFollow;
+              if (old && old.items === liveItems) { return old; }
+              if (old) {
+                old.mutations.disconnect();
+                if (old.resize) { old.resize.disconnect(); }
+                if (old.frame) { cancelAnimationFrame(old.frame); }
+                sc.removeEventListener('scroll', old.onScroll);
+                sc.removeEventListener('wheel', old.onUserScroll);
+                sc.removeEventListener('keydown', old.onKeyDown);
+              }
+
+              var state = {
+                items: liveItems,
+                following: true,
+                frame: 0,
+                resize: null
+              };
+              function isAtBottom() {
+                return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 15;
+              }
+              function scheduleFollow() {
+                if (!state.following || state.frame) { return; }
+                state.frame = requestAnimationFrame(function () {
+                  state.frame = 0;
+                  if (!state.following || !document.getElementById('blc-history')) { return; }
+                  sc.scrollTop = sc.scrollHeight;
+                });
+              }
+
+              // scroll 事件本身也可能来自布局变化；它只负责确认“已经回到底部”。
+              // 真正取消跟随只响应用户输入，避免程序滚动的延迟事件误判。
+              state.onScroll = function () {
+                if (isAtBottom()) { state.following = true; }
+              };
+              state.onUserScroll = function () {
+                state.following = false;
+                requestAnimationFrame(function () {
+                  if (isAtBottom()) { state.following = true; }
+                });
+              };
+              state.onKeyDown = function (event) {
+                if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar'].indexOf(event.key) >= 0) {
+                  state.onUserScroll();
+                }
+              };
+
+              sc.addEventListener('scroll', state.onScroll, { passive: true });
+              sc.addEventListener('wheel', state.onUserScroll, { passive: true });
+              sc.addEventListener('keydown', state.onKeyDown);
+
+              state.mutations = new MutationObserver(scheduleFollow);
+              state.mutations.observe(liveItems, {
+                childList: true,
+                subtree: true,
+                characterData: true
+              });
+              if (typeof ResizeObserver !== 'undefined') {
+                state.resize = new ResizeObserver(scheduleFollow);
+                state.resize.observe(liveItems);
+              }
+              state.scheduleFollow = scheduleFollow;
+              sc.__blcHistoryAutoFollow = state;
+              return state;
+            }
+
             // #items 的高度由 blivechat 用 JS 控着（滚动动画要用），
             // 塞进去的内容撑不开它，整块就塌成 0 高。
             // 插到滚动容器里、它管辖的 #item-offset 之前，才能正常占位。
             function place() {
-              if (document.getElementById('blc-history')) { return; }
               var sc = document.querySelector('#item-scroller');
               var offset = document.querySelector('#item-offset');
-              if (!sc || !offset) { return; }
-              sc.insertBefore(build(), offset);
-              sc.scrollTop = sc.scrollHeight;
+              var liveItems = document.querySelector('#items');
+              if (!sc || !offset || !liveItems) { return; }
+
+              var placed = false;
+              if (!document.getElementById('blc-history')) {
+                sc.insertBefore(build(), offset);
+                placed = true;
+              }
+
+              var follow = installHistoryAutoFollow(sc, liveItems);
+              if (placed) {
+                follow.following = true;
+                sc.scrollTop = sc.scrollHeight;
+                follow.scheduleFollow();
+              }
             }
 
             place();
@@ -339,26 +415,10 @@ final class HUDWindow: NSWindow {
               if (tries++ > 20) { clearInterval(guard); return; }
               place();
             }, 400);
-
-            var host = document.getElementById('blc-history');
-            var first = host && host.children[0];
-            return JSON.stringify({
-              placed: !!host,
-              kids: host ? host.children.length : -1,
-              hostH: host ? host.getBoundingClientRect().height : -1,
-              hostDisplay: host ? getComputedStyle(host).display : '',
-              firstTag: first ? first.tagName : '',
-              firstH: first ? first.getBoundingClientRect().height : -1,
-              firstDisplay: first ? getComputedStyle(first).display : '',
-              itemsDisplay: getComputedStyle(items).display,
-              itemsH: items.getBoundingClientRect().height
-            });
-          } catch (e) { return 'error:' + e.message; }
+          } catch (e) {}
         })();
         """
-        webView.evaluateJavaScript(js) { result, error in
-            Log.write("restoreHistory -> \(result ?? "nil") error=\(error?.localizedDescription ?? "none")")
-        }
+        webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     /// 轮询鼠标位置。用轮询而不是全局事件监听，是为了不碰辅助功能权限。
