@@ -43,7 +43,8 @@ struct EmoticonPicker: View {
 
     private let columns = [GridItem(.adaptive(minimum: 72), spacing: 8)]
 
-    @State private var selectedPack: String?
+    /// 记住上次用的系列，下次开面板直接落在那儿
+    @AppStorage("lastEmotePackID") private var selectedPack = ""
     @State private var hovered: BilibiliAccount.Emoticon?
 
     private var currentPack: BilibiliAccount.EmotePack? {

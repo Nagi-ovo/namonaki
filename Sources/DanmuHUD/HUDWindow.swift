@@ -116,6 +116,7 @@ final class HUDWindow: NSWindow {
         overlay.forwardTarget = webView
         container.addSubview(overlay)
         dragOverlay = overlay
+        overlay.onToggleCollapse = { [weak self] in self?.toggleCollapsed() }
 
         contentView = container
 
@@ -374,21 +375,66 @@ final class HUDWindow: NSWindow {
 
         let screenPoint = NSEvent.mouseLocation
         guard frame.contains(screenPoint) else {
+            dragOverlay?.mouseInside = false
+            dragOverlay?.hoveringCollapseButton = false
             applyHover(nil)
             return
         }
 
         let local = NSPoint(x: screenPoint.x - frame.minX, y: screenPoint.y - frame.minY)
-        let hit = messageHits.first { $0.rect.contains(local) }
+        dragOverlay?.mouseInside = true
+        dragOverlay?.hoveringCollapseButton =
+            dragOverlay?.collapseButtonRect.contains(local) ?? false
+
+        let hit = isCollapsed ? nil : messageHits.first { $0.rect.contains(local) }
         applyHover(hit?.author)
+        refreshMouseTransparency()
     }
 
     private func applyHover(_ author: String?) {
         guard hoveringAuthor != author else { return }
         hoveringAuthor = author
         dragOverlay?.hoveredAuthor = author
-        ignoresMouseEvents = author == nil
+        refreshMouseTransparency()
     }
+
+    /// 窗口只在「鼠标压着弹幕」或「鼠标在收起按钮上」时接事件，
+    /// 其余时候一律隐形，免得整片透明区域挡住后面的窗口。
+    private func refreshMouseTransparency() {
+        guard !isEditingLayout else { return }
+        ignoresMouseEvents = hoveringAuthor == nil && !(dragOverlay?.hoveringCollapseButton ?? false)
+    }
+
+    // MARK: - 收起 / 展开
+
+    private(set) var isCollapsed = false
+    private var expandedHeight: CGFloat = 0
+
+    func toggleCollapsed() {
+        if isCollapsed {
+            let top = frame.maxY
+            let height = expandedHeight > 0 ? expandedHeight : 500
+            setFrame(
+                NSRect(x: frame.minX, y: top - height, width: frame.width, height: height),
+                display: true
+            )
+            isCollapsed = false
+        } else {
+            expandedHeight = frame.height
+            let top = frame.maxY
+            // 收起后只留顶部那条，位置按上边缘对齐，看着才像「收上去了」
+            setFrame(
+                NSRect(x: frame.minX, y: top - Self.collapsedHeight,
+                       width: frame.width, height: Self.collapsedHeight),
+                display: true
+            )
+            isCollapsed = true
+        }
+        dragOverlay?.isCollapsed = isCollapsed
+        dragOverlay?.needsDisplay = true
+    }
+
+    static let collapsedHeight: CGFloat = 34
 
     /// 右键弹幕时用的
     fileprivate func replyToHovered() {
@@ -596,6 +642,21 @@ private final class DragOverlay: NSView {
         didSet { needsDisplay = true }
     }
 
+    /// 鼠标在窗口里才显示收起按钮，平时不打扰画面
+    var mouseInside = false {
+        didSet { if oldValue != mouseInside { needsDisplay = true } }
+    }
+    var hoveringCollapseButton = false {
+        didSet { if oldValue != hoveringCollapseButton { needsDisplay = true } }
+    }
+    var isCollapsed = false
+    var onToggleCollapse: (() -> Void)?
+
+    /// 收起按钮固定在右上角
+    var collapseButtonRect: NSRect {
+        NSRect(x: bounds.maxX - 32, y: bounds.maxY - 28, width: 24, height: 24)
+    }
+
     var showsGuide = false {
         didSet { needsDisplay = true }
     }
@@ -606,20 +667,62 @@ private final class DragOverlay: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        let local = convert(event.locationInWindow, from: nil)
+        if collapseButtonRect.contains(local) {
+            onToggleCollapse?()
+            return
+        }
         window?.performDrag(with: event)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // 只有编辑模式才接管。平时一律放行给下面的 WebView——
-        // 左键要留给网页选中复制文字，回复走右键菜单。
-        isEditing ? super.hitTest(point) : nil
+        // 收起按钮要能点到
+        let local = convert(point, from: superview)
+        if (mouseInside || isCollapsed), collapseButtonRect.contains(local) {
+            return self
+        }
+        // 其余时候只有编辑模式才接管：左键要留给网页选中复制文字，
+        // 回复走 WebView 的右键菜单。
+        return isEditing ? super.hitTest(point) : nil
     }
 
     override func scrollWheel(with event: NSEvent) {
         forwardTarget?.scrollWheel(with: event)
     }
 
+    /// 右上角的收起/展开按钮。只在鼠标进窗口时浮现，收起状态下常驻，
+    /// 不然收起后就再也找不到它了。
+    private func drawCollapseButton() {
+        guard mouseInside || isCollapsed else { return }
+
+        let rect = collapseButtonRect
+        let bg = NSBezierPath(ovalIn: rect)
+        NSColor.black.withAlphaComponent(hoveringCollapseButton ? 0.68 : 0.42).setFill()
+        bg.fill()
+
+        // 一个朝上或朝下的箭头
+        let arrow = NSBezierPath()
+        let mid = NSPoint(x: rect.midX, y: rect.midY)
+        let w: CGFloat = 5, h: CGFloat = 3
+        if isCollapsed {
+            arrow.move(to: NSPoint(x: mid.x - w, y: mid.y + h))
+            arrow.line(to: NSPoint(x: mid.x, y: mid.y - h))
+            arrow.line(to: NSPoint(x: mid.x + w, y: mid.y + h))
+        } else {
+            arrow.move(to: NSPoint(x: mid.x - w, y: mid.y - h))
+            arrow.line(to: NSPoint(x: mid.x, y: mid.y + h))
+            arrow.line(to: NSPoint(x: mid.x + w, y: mid.y - h))
+        }
+        arrow.lineWidth = 1.8
+        arrow.lineCapStyle = .round
+        arrow.lineJoinStyle = .round
+        NSColor.white.withAlphaComponent(0.92).setStroke()
+        arrow.stroke()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        defer { drawCollapseButton() }
+
         guard showsGuide else {
             if showsOutline {
                 let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
