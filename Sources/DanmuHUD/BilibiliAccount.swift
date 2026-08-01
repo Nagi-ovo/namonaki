@@ -105,6 +105,45 @@ final class BilibiliAccount: ObservableObject {
         }
     }
 
+    // MARK: - 表情
+
+    struct Emoticon: Identifiable, Hashable {
+        let id: String        // emoticon_unique，发送时当 msg 用
+        let text: String      // 触发词，形如 [妙]
+        let url: String
+        let descript: String
+        /// 没解锁的表情发出去会被服务端拒绝，先在界面上标出来
+        let locked: Bool
+    }
+
+    @Published private(set) var emoticons: [Emoticon] = []
+
+    /// 拉取当前直播间可用的表情包。要登录，而且不同直播间的表情不一样。
+    func refreshEmoticons() async {
+        guard isLoggedIn, let room = effectiveRoomID else { return }
+        let url = "https://api.live.bilibili.com/xlive/web-ucenter/v2/emoticon/GetEmoticons"
+            + "?platform=pc&room_id=\(room)"
+        guard let json = try? await getJSON(url),
+              let data = json["data"] as? [String: Any],
+              let packs = data["data"] as? [[String: Any]] else { return }
+
+        emoticons = packs.flatMap { pack -> [Emoticon] in
+            let list = pack["emoticons"] as? [[String: Any]] ?? []
+            return list.compactMap { item in
+                guard let unique = item["emoticon_unique"] as? String else { return nil }
+                // perm 为 0 一般表示没有使用权限（等级或粉丝勋章不够）
+                let perm = item["perm"] as? Int ?? 1
+                return Emoticon(
+                    id: unique,
+                    text: item["emoji"] as? String ?? "",
+                    url: item["url"] as? String ?? "",
+                    descript: item["descript"] as? String ?? "",
+                    locked: perm == 0
+                )
+            }
+        }
+    }
+
     // MARK: - 发送
 
     enum SendError: LocalizedError {
@@ -132,7 +171,12 @@ final class BilibiliAccount: ObservableObject {
         }
     }
 
-    func send(_ raw: String) async throws {
+    /// 发大表情：msg 传表情的 emoticon_unique，再用 dm_type=1 告诉服务端这是表情
+    func send(emoticon: Emoticon) async throws {
+        try await send(emoticon.id, dmType: 1)
+    }
+
+    func send(_ raw: String, dmType: Int = 0) async throws {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw SendError.empty }
         guard let sess = sessData, let jct = csrf else { throw SendError.notLoggedIn }
@@ -153,6 +197,7 @@ final class BilibiliAccount: ObservableObject {
 
         let fields: [String: String] = [
             "bubble": "0",
+            "dm_type": String(dmType),
             "msg": text,
             "color": "16777215",
             "mode": "1",

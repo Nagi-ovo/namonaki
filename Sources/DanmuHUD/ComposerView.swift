@@ -6,6 +6,7 @@ struct ComposerView: View {
     @ObservedObject private var account = BilibiliAccount.shared
     @ObservedObject private var model = ComposerModel.shared
     @State private var status: Status = .idle
+    @State private var showEmoticons = false
     @FocusState private var focused: Bool
 
     private var text: String {
@@ -34,6 +35,20 @@ struct ComposerView: View {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color.secondary.opacity(0.12))
                     )
+
+                Button {
+                    showEmoticons.toggle()
+                } label: {
+                    Image(systemName: "face.smiling")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!account.isLoggedIn)
+                .popover(isPresented: $showEmoticons, arrowEdge: .bottom) {
+                    EmoticonPicker { emoticon in
+                        showEmoticons = false
+                        sendEmoticon(emoticon)
+                    }
+                }
 
                 Button {
                     submit()
@@ -76,7 +91,10 @@ struct ComposerView: View {
         }
         .padding(14)
         .frame(width: 420)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            Task { await account.refreshEmoticons() }
+        }
         .onChange(of: model.focusToken) { _, _ in focused = true }
     }
 
@@ -85,6 +103,20 @@ struct ComposerView: View {
         guard let room = account.effectiveRoomID else { return "还没设置直播间号" }
         let who = account.userName.map { "以 \($0) 的身份" } ?? ""
         return "\(who)发到直播间 \(room)"
+    }
+
+    private func sendEmoticon(_ emoticon: BilibiliAccount.Emoticon) {
+        status = .sending
+        Task {
+            do {
+                try await account.send(emoticon: emoticon)
+                status = .sent
+                try? await Task.sleep(for: .seconds(1.5))
+                if status == .sent { status = .idle }
+            } catch {
+                status = .failed(error.localizedDescription)
+            }
+        }
     }
 
     private func submit() {
