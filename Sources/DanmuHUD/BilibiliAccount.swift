@@ -136,7 +136,7 @@ final class BilibiliAccount: ObservableObject {
                 return Emoticon(
                     id: unique,
                     text: item["emoji"] as? String ?? "",
-                    url: item["url"] as? String ?? "",
+                    url: Self.httpsURL(item["url"] as? String ?? ""),
                     descript: item["descript"] as? String ?? "",
                     locked: perm == 0
                 )
@@ -225,6 +225,15 @@ final class BilibiliAccount: ObservableObject {
     }
 
     // MARK: - 工具
+
+    /// B 站返回的表情图是 http 的，而 ATS 只放行了网页内的明文请求，
+    /// app 自己发的（AsyncImage 走 URLSession）会被拦掉，图就一片空白。
+    /// 这些 CDN 都支持 https，直接升级协议最干净，不用放宽 ATS。
+    private static func httpsURL(_ raw: String) -> String {
+        if raw.hasPrefix("//") { return "https:" + raw }
+        if raw.hasPrefix("http://") { return "https://" + raw.dropFirst("http://".count) }
+        return raw
+    }
 
     private static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
