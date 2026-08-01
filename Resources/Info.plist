@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>DanmuHUD</string>
+    <key>CFBundleDisplayName</key>
+    <string>弹幕窗</string>
+    <key>CFBundleIdentifier</key>
+    <string>fun.nagi.danmuhud</string>
+    <key>CFBundleExecutable</key>
+    <string>DanmuHUD</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <!-- 菜单栏常驻，不在 Dock 显示 -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- 内置屏有刘海时，系统会启用 safe-area 兼容模式改变屏幕可用区域，
+         窗口就拉不到菜单栏那一段。这里声明由 app 自己处理 safe area。 -->
+    <key>NSPrefersDisplaySafeAreaCompatibilityMode</key>
+    <false/>
+    <!-- blivechat 跑在 127.0.0.1 的 http 上，需要放行本地明文连接。
+         头像 URL 被 blivechat 去掉了协议（//i0.hdslb.com/…），页面是 http，
+         所以头像也走 http，得一并放行 WebView 内的明文请求，否则显示破图。 -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+        <key>NSAllowsArbitraryLoadsInWebContent</key>
+        <true/>
+    </dict>
+</dict>
+</plist>
