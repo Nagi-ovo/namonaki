@@ -111,6 +111,10 @@ struct ComposerView: View {
             Task { await account.refreshEmoticons() }
         }
         .onChange(of: model.focusToken) { _, _ in focused = true }
+        // 改了文字就把上一条错误清掉，否则删到合法长度了红字还挂在那儿
+        .onChange(of: model.text) { _, _ in
+            if case .failed = status { status = .idle }
+        }
     }
 
     private var hint: String {
