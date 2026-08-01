@@ -36,10 +36,13 @@ final class BilibiliAccount: ObservableObject {
     private var lastSentAt: Date?
 
     private init() {
+        hiddenPackIDs = Set(UserDefaults.standard.stringArray(forKey: "hiddenPackIDs") ?? [])
         manualRoomID = UserDefaults.standard.string(forKey: "manualRoomID") ?? ""
         userName = UserDefaults.standard.string(forKey: "biliUserName")
         let savedRoom = UserDefaults.standard.integer(forKey: "biliRoomID")
         roomID = savedRoom > 0 ? savedRoom : nil
+        // 先用上次缓存的表情把面板填上，网络那边慢慢刷
+        packs = EmoteCache.load()
     }
 
     // MARK: - 登录
@@ -107,9 +110,9 @@ final class BilibiliAccount: ObservableObject {
 
     // MARK: - 表情
 
-    struct Emoticon: Identifiable, Hashable {
+    struct Emoticon: Identifiable, Hashable, Codable {
         /// 两类表情的发送方式完全不同
-        enum Kind: Hashable {
+        enum Kind: String, Hashable, Codable {
             /// 直播间表情包：msg 传 emoticon_unique，配 dm_type=1
             case roomEmoticon
             /// 装扮表情：msg 就是触发词文本（如 [MyGO_喜欢抹茶]），服务端自己换成图
@@ -125,14 +128,30 @@ final class BilibiliAccount: ObservableObject {
         let locked: Bool
     }
 
-    struct EmotePack: Identifiable, Hashable {
+    struct EmotePack: Identifiable, Hashable, Codable {
         let id: String
         let name: String
         let items: [Emoticon]
+        /// 直播弹幕只认装扮类表情（图片走 /garb/）。评论区那些基础表情
+        /// （小黄脸、热词系列，图片走 /emote/）发过去只会显示成 [xxx] 文字。
+        let liveRenderable: Bool
     }
 
     @Published private(set) var emoticons: [Emoticon] = []
-    @Published private(set) var packs: [EmotePack] = []
+    @Published private(set) var packs: [EmotePack] = [] {
+        didSet { EmoteCache.save(packs) }
+    }
+
+    /// 用户在设置里关掉的表情系列，面板不显示
+    @Published var hiddenPackIDs: Set<String> {
+        didSet {
+            UserDefaults.standard.set(Array(hiddenPackIDs), forKey: "hiddenPackIDs")
+        }
+    }
+
+    var visiblePacks: [EmotePack] {
+        packs.filter { !hiddenPackIDs.contains($0.id) }
+    }
 
     /// 拉取当前直播间可用的表情包。要登录，而且不同直播间的表情不一样。
     func refreshEmoticons() async {
@@ -175,8 +194,13 @@ final class BilibiliAccount: ObservableObject {
 
         var result: [EmotePack] = []
         if !emoticons.isEmpty {
-            result.append(EmotePack(id: "room", name: "直播间", items: emoticons))
+            result.append(EmotePack(
+                id: "room", name: "直播间", items: emoticons, liveRenderable: true
+            ))
         }
+
+        var renderable: [EmotePack] = []
+        var textOnly: [EmotePack] = []
 
         for pack in list {
             let name = pack["text"] as? String ?? "表情"
@@ -196,10 +220,17 @@ final class BilibiliAccount: ObservableObject {
                 )
             }
             guard !items.isEmpty else { continue }
-            result.append(EmotePack(id: "\(pack["id"] ?? name)", name: name, items: items))
+
+            // 装扮表情的图片挂在 /garb/ 下，这类直播才认
+            let live = items.contains { $0.url.contains("/bfs/garb/") }
+            let entry = EmotePack(
+                id: "\(pack["id"] ?? name)", name: name, items: items, liveRenderable: live
+            )
+            if live { renderable.append(entry) } else { textOnly.append(entry) }
         }
 
-        packs = result
+        // 能出图的排前面，只能出文字的沉到后面
+        packs = result + renderable + textOnly
     }
 
     // MARK: - 发送

@@ -452,9 +452,64 @@ private struct AccountTab: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("表情系列")
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    Button("刷新") { Task { await account.refreshEmoticons() } }
+                        .controlSize(.small)
+                }
+                if account.packs.isEmpty {
+                    Text("登录后点刷新，会列出你拥有的表情包。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(account.packs) { pack in
+                                Toggle(isOn: Binding(
+                                    get: { !account.hiddenPackIDs.contains(pack.id) },
+                                    set: { show in
+                                        if show {
+                                            account.hiddenPackIDs.remove(pack.id)
+                                        } else {
+                                            account.hiddenPackIDs.insert(pack.id)
+                                        }
+                                    }
+                                )) {
+                                    HStack(spacing: 6) {
+                                        Text(pack.name).font(.system(size: 12))
+                                        Text("\(pack.items.count)")
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                        if !pack.liveRenderable {
+                                            Text("只出文字")
+                                                .font(.system(size: 9))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(Capsule().fill(Color.orange.opacity(0.18)))
+                                                .foregroundStyle(.orange)
+                                        }
+                                    }
+                                }
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+                    }
+                    .frame(height: 110)
+                    Text("标「只出文字」的是评论区表情包，发到直播弹幕只会显示成 [xxx]，B 站不给渲染成图。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Spacer()
 
-            Text("登录凭证存在系统钥匙串里，不会写进配置文件，也不上传任何地方。发送走 B 站官方接口，本地限速每秒最多一条，避免撞风控。收弹幕仍然走 blivechat 的只读接口，和这套登录无关。")
+            Text("登录凭证存在本机文件里（只有你能读），不上传任何地方。发送走 B 站官方接口，本地限速每秒最多一条，避免撞风控。收弹幕仍然走 blivechat 的只读接口，和这套登录无关。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)

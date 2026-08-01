@@ -41,17 +41,17 @@ struct EmoticonPicker: View {
     @ObservedObject private var account = BilibiliAccount.shared
     let onPick: (BilibiliAccount.Emoticon) -> Void
 
-    private let columns = [GridItem(.adaptive(minimum: 54), spacing: 8)]
+    private let columns = [GridItem(.adaptive(minimum: 72), spacing: 8)]
 
     @State private var selectedPack: String?
     @State private var hovered: BilibiliAccount.Emoticon?
 
     private var currentPack: BilibiliAccount.EmotePack? {
-        account.packs.first { $0.id == selectedPack } ?? account.packs.first
+        account.visiblePacks.first { $0.id == selectedPack } ?? account.visiblePacks.first
     }
 
     var body: some View {
-        if account.packs.isEmpty {
+        if account.visiblePacks.isEmpty {
             legacyBody
         } else {
             VStack(spacing: 0) {
@@ -63,38 +63,46 @@ struct EmoticonPicker: View {
             }
             // 必须钉死尺寸：popover 的大小由内容决定，不给约束的话
             // 网格会一路把它撑开，反而滚不动
-            .frame(width: 360, height: 380)
+            .frame(width: 420, height: 430)
         }
     }
 
+    /// 用下拉而不是横向标签条：十几个系列排成一条根本拖不动
     private var packTabs: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
-                ForEach(account.packs) { pack in
-                    let active = pack.id == currentPack?.id
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(account.visiblePacks) { pack in
                     Button {
                         selectedPack = pack.id
                     } label: {
-                        Text(pack.name)
-                            .font(.system(size: 11, weight: active ? .semibold : .regular))
-                            .lineLimit(1)
-                            .fixedSize()
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule().fill(
-                                    active ? Color.accentColor : Color.secondary.opacity(0.12)
-                                )
-                            )
-                            .foregroundStyle(active ? .white : .primary)
+                        Text(pack.liveRenderable ? pack.name : "\(pack.name)（只出文字）")
                     }
-                    .buttonStyle(.plain)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(currentPack?.name ?? "选择表情系列")
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9))
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
+            if let pack = currentPack, !pack.liveRenderable {
+                Text("直播不出图")
+                    .font(.system(size: 9))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.orange.opacity(0.2)))
+                    .foregroundStyle(.orange)
+            }
+
+            Spacer()
         }
-        .frame(height: 42)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var grid: some View {
@@ -170,8 +178,8 @@ struct EmoticonPicker: View {
 
     private func cell(_ emoticon: BilibiliAccount.Emoticon) -> some View {
         CachedImage(url: emoticon.url)
-            .frame(width: 46, height: 46)
-            .padding(3)
+            .frame(width: 64, height: 64)
+            .padding(4)
             .background(
                 RoundedRectangle(cornerRadius: 7)
                     .fill(hovered == emoticon ? Color.accentColor.opacity(0.16) : Color.clear)

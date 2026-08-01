@@ -2,11 +2,31 @@ import AppKit
 import WebKit
 import Combine
 
+/// 接管右键菜单的 WebView。左键要留给网页做文字选中，
+/// 所以回复只能挂在右键上，而右键默认会弹 WebKit 自己的菜单。
+@MainActor
+final class ChatWebView: WKWebView {
+    var hoveredAuthor: (() -> String?)?
+    var onReply: (() -> Void)?
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        guard let author = hoveredAuthor?(), !author.isEmpty else { return }
+        menu.removeAllItems()
+        let item = NSMenuItem(title: "回复 @\(author)", action: #selector(replyAction), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+    }
+
+    @objc private func replyAction() {
+        onReply?()
+    }
+}
+
 /// 桌面上那个半透明弹幕窗。
-/// 无标题栏、背景透明、可置顶、可鼠标穿透，整块区域都能拖动。
+/// 无标题栏、背景透明、平时对鼠标隐形，编辑模式下可拖可缩放。
 @MainActor
 final class HUDWindow: NSWindow {
-    private let webView: WKWebView
+    private let webView: ChatWebView
     private var cancellables = Set<AnyCancellable>()
     private let prefs = Preferences.shared
     private weak var dragOverlay: DragOverlay?
@@ -51,7 +71,7 @@ final class HUDWindow: NSWindow {
     init() {
         let config = WKWebViewConfiguration()
         config.suppressesIncrementalRendering = false
-        webView = WKWebView(frame: .zero, configuration: config)
+        webView = ChatWebView(frame: .zero, configuration: config)
 
         let frame = prefs.savedFrame ?? NSRect(x: 120, y: 120, width: 380, height: 620)
         super.init(
@@ -81,6 +101,8 @@ final class HUDWindow: NSWindow {
         webView.underPageBackgroundColor = .clear
         webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self
+        webView.hoveredAuthor = { [weak self] in self?.hoveringAuthor }
+        webView.onReply = { [weak self] in self?.replyToHovered() }
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizingMask = [.width, .height]
@@ -584,31 +606,13 @@ private final class DragOverlay: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        // 悬在弹幕上时左键也当回复用，别把窗口拖跑了
-        if !isEditing, hoveredAuthor != nil {
-            (window as? HUDWindow)?.replyToHovered()
-            return
-        }
         window?.performDrag(with: event)
     }
 
-    override func rightMouseDown(with event: NSEvent) {
-        guard let author = hoveredAuthor, !author.isEmpty else { return }
-        let menu = NSMenu()
-        let reply = NSMenuItem(title: "回复 @\(author)", action: #selector(replyAction), keyEquivalent: "")
-        reply.target = self
-        menu.addItem(reply)
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
-    }
-
-    @objc private func replyAction() {
-        (window as? HUDWindow)?.replyToHovered()
-    }
-
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // 编辑模式全盘接管；平时只在鼠标压着某条弹幕时才接，
-        // 其余区域一律放行，免得挡住后面的窗口
-        (isEditing || hoveredAuthor != nil) ? super.hitTest(point) : nil
+        // 只有编辑模式才接管。平时一律放行给下面的 WebView——
+        // 左键要留给网页选中复制文字，回复走右键菜单。
+        isEditing ? super.hitTest(point) : nil
     }
 
     override func scrollWheel(with event: NSEvent) {
