@@ -65,6 +65,17 @@ WebView 扫码登录 → 取 Cookie 里的 `SESSDATA` / `bili_jct` → 存钥匙
 接口规格出自 bilibili-API-collect，**原仓库已被清空**（只剩一张说明图），
 参考还存活的 fork：`github.com/pskdje/bilibili-API-collect`，文档在 `docs/live/danmaku.md`。
 
+**装扮表情要加 `upower_` 前缀**，这条任何文档里都没有，是抓官方请求抓出来的：
+`msg=upower_[MyGO_哈？！]` + `dm_type=1` + `emoticonOptions=[object Object]`
+（官方前端自己把对象拼错成了这个字面量，值不重要，缺了才是问题）+
+`data_extend={"trackid":"-99998"}`。少任何一样服务端都只当纯文本，显示成 `[xxx]`。
+
+表情分两类，靠图片路径区分：`/bfs/garb/` 是装扮表情，直播能渲染成图；
+`/bfs/emote/` 是评论区基础表情（小黄脸、热词系列），直播只显示文字，这是 B 站的限制。
+
+抓包方法：浏览器扩展的网络面板抓不到这条 POST，得在页面里 hook
+`XMLHttpRequest.prototype.send` 和 `window.fetch` 才拿得到。
+
 ## 样式
 
 `DefaultStyle.css` 是基础样式表，顶部几个 CSS 变量（字号 / 用户名不透明度 / 头像大小 /

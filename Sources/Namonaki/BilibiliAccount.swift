@@ -264,15 +264,20 @@ final class BilibiliAccount: ObservableObject {
         switch emoticon.kind {
         case .roomEmoticon:
             try await send(emoticon.id, dmType: 1)
+
+        case .textToken where emoticon.url.contains("/bfs/garb/"):
+            // 装扮表情不是光把触发词当文本发就行的。抓官方请求发现：
+            // msg 要加 upower_ 前缀、dm_type=1，还得带上 emoticonOptions
+            // 和 data_extend。少一样服务端就只当纯文本，显示成 [xxx]。
+            try await send("upower_" + emoticon.text, dmType: 1, asEmoticon: true)
+
         case .textToken:
-            // 不能传 dm_type=0——那等于告诉服务端「这是纯文本」，
-            // 它就不再把 [MyGO_喜欢抹茶] 替换成表情图了。官方发普通弹幕
-            // 时压根不带这个字段。
+            // 评论区的基础表情（/bfs/emote/）直播根本不渲染，当文本发出去
             try await send(emoticon.text)
         }
     }
 
-    func send(_ raw: String, dmType: Int? = nil) async throws {
+    func send(_ raw: String, dmType: Int? = nil, asEmoticon: Bool = false) async throws {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw SendError.empty }
         guard let sess = sessData, let jct = csrf else { throw SendError.notLoggedIn }
@@ -310,6 +315,12 @@ final class BilibiliAccount: ObservableObject {
         ]
         if let dmType {
             fields["dm_type"] = String(dmType)
+        }
+        if asEmoticon {
+            // 照抄官方：emoticonOptions 官方前端自己拼成了字面量
+            // "[object Object]"，值本身不重要，缺了才是问题
+            fields["emoticonOptions"] = "[object Object]"
+            fields["data_extend"] = #"{"trackid":"-99998"}"#
         }
         request.httpBody = Self.formEncode(fields).data(using: .utf8)
 
