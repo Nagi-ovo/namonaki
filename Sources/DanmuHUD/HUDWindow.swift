@@ -218,8 +218,11 @@ final class HUDWindow: NSWindow {
         let controller = webView.configuration.userContentController
         controller.removeScriptMessageHandler(forName: "danmuRects")
         controller.add(MessageRectBridge(window: self), name: "danmuRects")
+        installUserScript()
+    }
 
-        let js = """
+    private var messageTrackingJS: String {
+        """
         (function () {
           function report() {
             try {
@@ -245,9 +248,6 @@ final class HUDWindow: NSWindow {
           report();
         })();
         """
-        controller.addUserScript(WKUserScript(
-            source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: true
-        ))
     }
 
     /// 轮询鼠标位置。用轮询而不是全局事件监听，是为了不碰辅助功能权限。
@@ -287,15 +287,19 @@ final class HUDWindow: NSWindow {
         (NSApp.delegate as? AppDelegate)?.openComposer()
     }
 
-    /// 页面一加载就自动注入，比等 didFinish 再 evaluate 可靠得多
+    /// 页面一加载就自动注入，比等 didFinish 再 evaluate 可靠得多。
+    /// 注意 removeAllUserScripts 是一刀切的，所以每次重装都得把弹幕位置上报
+    /// 那段一起加回去——之前漏了这条，右键回复一直没反应就是因为它被清掉了。
     private func installUserScript() {
         let controller = webView.configuration.userContentController
         controller.removeAllUserScripts()
-        controller.addUserScript(WKUserScript(
-            source: cssInjectionJS,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
-        ))
+        for source in [cssInjectionJS, messageTrackingJS] {
+            controller.addUserScript(WKUserScript(
+                source: source,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            ))
+        }
     }
 
     fileprivate func injectCSS() {

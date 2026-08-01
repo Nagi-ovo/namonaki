@@ -275,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.styleMask = [.titled, .closable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
+        window.isMovableByWindowBackground = true
         window.level = .floating
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -307,6 +308,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "弹幕窗设置"
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.isReleasedWhenClosed = false
+        // 空白处也能拖，不用非得抓标题栏
+        window.isMovableByWindowBackground = true
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
