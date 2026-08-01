@@ -253,6 +253,26 @@ final class HUDWindow: NSWindow {
         }
     }
 
+    /// 把当前位置和大小收藏起来
+    func rememberSpot() {
+        prefs.bookmarkFrame = NSStringFromRect(frame)
+    }
+
+    /// 回到收藏的位置
+    func recallSpot() {
+        guard !prefs.bookmarkFrame.isEmpty else { return }
+        let target = NSRectFromString(prefs.bookmarkFrame)
+        guard target.width > 0, target.height > 0 else { return }
+        setFrame(target, display: true)
+        orderFrontRegardless()
+    }
+
+    /// 直接按数字摆放，设置面板里手填坐标用
+    func applyFrame(x: Double, y: Double, width: Double, height: Double) {
+        setFrame(NSRect(x: x, y: y, width: max(width, 120), height: max(height, 80)), display: true)
+        orderFrontRegardless()
+    }
+
     /// 把窗口拉回主屏中间，尺寸也复位——窗口找不着了的时候用
     func resetPosition() {
         let bounds = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero

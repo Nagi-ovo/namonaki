@@ -289,6 +289,10 @@ private struct WindowTab: View {
                 }
             }
 
+            Divider()
+
+            PositionEditor()
+
             Spacer()
 
             VStack(alignment: .leading, spacing: 6) {
@@ -301,6 +305,89 @@ private struct WindowTab: View {
             }
         }
         .toggleStyle(.switch)
+    }
+}
+
+// MARK: - 位置
+
+/// 直接按数字摆窗口，外加一个「记住 / 回到」的收藏位
+private struct PositionEditor: View {
+    @ObservedObject private var prefs = Preferences.shared
+    @State private var x = ""
+    @State private var y = ""
+    @State private var w = ""
+    @State private var h = ""
+
+    private var hud: HUDWindow? { (NSApp.delegate as? AppDelegate)?.hud }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("位置和大小")
+                .font(.system(size: 13, weight: .medium))
+
+            HStack(spacing: 6) {
+                field("X", $x)
+                field("Y", $y)
+                field("宽", $w)
+                field("高", $h)
+                Button("应用") { apply() }
+                    .controlSize(.small)
+            }
+
+            HStack(spacing: 8) {
+                Button("记住当前位置") {
+                    hud?.rememberSpot()
+                    load()
+                }
+                .controlSize(.small)
+
+                Button("回到记住的位置") {
+                    hud?.recallSpot()
+                    load()
+                }
+                .controlSize(.small)
+                .disabled(prefs.bookmarkFrame.isEmpty)
+
+                Spacer()
+
+                Button("读取当前") { load() }
+                    .controlSize(.small)
+            }
+
+            Text("坐标原点在屏幕左下角。想固定在某个位置，摆好后点「记住当前位置」，以后一键回来。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear { load() }
+    }
+
+    private func field(_ label: String, _ binding: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+            TextField("", text: binding)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(width: 60)
+        }
+    }
+
+    private func load() {
+        guard let frame = hud?.frame else { return }
+        x = String(Int(frame.minX))
+        y = String(Int(frame.minY))
+        w = String(Int(frame.width))
+        h = String(Int(frame.height))
+    }
+
+    private func apply() {
+        guard let hud,
+              let px = Double(x), let py = Double(y),
+              let pw = Double(w), let ph = Double(h) else { return }
+        hud.applyFrame(x: px, y: py, width: pw, height: ph)
+        load()
     }
 }
 

@@ -4,7 +4,7 @@ import Combine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var hud: HUDWindow?
+    private(set) var hud: HUDWindow?
     private var settingsWindow: NSWindow?
     private var composerWindow: NSWindow?
     private var loginWindow: LoginWindow?
@@ -27,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setUpMainMenu()
         setUpStatusItem()
+
+        GlobalHotKey.shared.onFire = { [weak self] in self?.toggleEditing() }
+        GlobalHotKey.shared.register()
 
         // 没配地址时直接把设置面板推到脸上，省得找
         if prefs.roomURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -105,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        let editing = NSMenuItem(title: "调整位置和大小", action: #selector(toggleEditing), keyEquivalent: "e")
+        let editing = NSMenuItem(title: "调整位置和大小　⌥⌘E", action: #selector(toggleEditing), keyEquivalent: "")
         editing.target = self
         editing.state = (hud?.isEditingLayout ?? false) ? .on : .off
         menu.addItem(editing)
@@ -135,6 +138,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fill = NSMenuItem(title: "铺满屏幕高度", action: #selector(fillHeight), keyEquivalent: "")
         fill.target = self
         menu.addItem(fill)
+
+        let remember = NSMenuItem(title: "记住当前位置", action: #selector(rememberSpot), keyEquivalent: "")
+        remember.target = self
+        menu.addItem(remember)
+
+        let recall = NSMenuItem(title: "回到记住的位置", action: #selector(recallSpot), keyEquivalent: "")
+        recall.target = self
+        recall.isEnabled = !prefs.bookmarkFrame.isEmpty
+        menu.addItem(recall)
 
         let reset = NSMenuItem(title: "窗口找不着了，拉回中间", action: #selector(resetPosition), keyEquivalent: "")
         reset.target = self
@@ -192,6 +204,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func fillHeight() {
         hud?.fillScreenHeight()
+    }
+
+    @objc private func rememberSpot() {
+        hud?.rememberSpot()
+        statusItem?.menu = buildMenu()
+    }
+
+    @objc private func recallSpot() {
+        hud?.recallSpot()
     }
 
     @objc private func resetPosition() {

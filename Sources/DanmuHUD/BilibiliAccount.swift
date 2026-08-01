@@ -27,8 +27,12 @@ final class BilibiliAccount: ObservableObject {
         return roomID
     }
 
-    private var sessData: String? { Keychain.get("SESSDATA") }
-    private var csrf: String? { Keychain.get("bili_jct") }
+    // 钥匙串读一次就缓存住。每次界面刷新都去读的话，本地签名的 app 会被系统
+    // 反复弹窗要授权，烦得很。
+    private lazy var cachedSess: String? = Keychain.get("SESSDATA")
+    private lazy var cachedCSRF: String? = Keychain.get("bili_jct")
+    private var sessData: String? { cachedSess }
+    private var csrf: String? { cachedCSRF }
     private var lastSentAt: Date?
 
     private init() {
@@ -53,6 +57,8 @@ final class BilibiliAccount: ObservableObject {
 
         Keychain.set(sess, for: "SESSDATA")
         Keychain.set(jct, for: "bili_jct")
+        cachedSess = sess
+        cachedCSRF = jct
         objectWillChange.send()
         return true
     }
@@ -60,6 +66,8 @@ final class BilibiliAccount: ObservableObject {
     func signOut() {
         Keychain.delete("SESSDATA")
         Keychain.delete("bili_jct")
+        cachedSess = nil
+        cachedCSRF = nil
         userName = nil
         uid = nil
         roomID = nil

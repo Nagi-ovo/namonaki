@@ -25,6 +25,10 @@ final class Preferences: ObservableObject {
     @Published var presetID: String {
         didSet { defaults.set(presetID, forKey: Keys.presetID) }
     }
+    /// 收藏的窗口位置，一键回位用。空字符串表示还没存过。
+    @Published var bookmarkFrame: String {
+        didSet { defaults.set(bookmarkFrame, forKey: Keys.bookmarkFrame) }
+    }
     @Published var fontSize: Double {
         didSet { defaults.set(fontSize, forKey: Keys.fontSize) }
     }
@@ -65,6 +69,7 @@ final class Preferences: ObservableObject {
         static let alwaysOnTop = "alwaysOnTop"
         static let presetID = "presetID"
         static let cssVersion = "cssVersion"
+        static let bookmarkFrame = "bookmarkFrame"
         static let frame = "windowFrame"
         static let fontSize = "fontSize"
         static let nameOpacity = "nameOpacity"
@@ -80,6 +85,7 @@ final class Preferences: ObservableObject {
         opacity = defaults.object(forKey: Keys.opacity) as? Double ?? 1.0
         alwaysOnTop = defaults.object(forKey: Keys.alwaysOnTop) as? Bool ?? true
         presetID = defaults.string(forKey: Keys.presetID) ?? StylePreset.restrained.rawValue
+        bookmarkFrame = defaults.string(forKey: Keys.bookmarkFrame) ?? ""
         fontSize = defaults.object(forKey: Keys.fontSize) as? Double ?? 21
         nameOpacity = defaults.object(forKey: Keys.nameOpacity) as? Double ?? 0.75
         avatarSize = defaults.object(forKey: Keys.avatarSize) as? Double ?? 26
