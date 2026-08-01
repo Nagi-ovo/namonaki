@@ -15,12 +15,23 @@ final class HUDWindow: NSWindow {
     /// 平时是关的，窗口对鼠标完全隐形。
     private(set) var isEditingLayout = false
 
+    /// JS 定期上报的每条弹幕的位置和作者，用来判断鼠标有没有悬在弹幕上
+    fileprivate struct MessageHit {
+        let rect: NSRect
+        let author: String
+    }
+    fileprivate var messageHits: [MessageHit] = []
+    private var hoverTimer: Timer?
+    /// 鼠标正悬在某条弹幕上——这时窗口临时接收鼠标事件，好让人右键回复
+    private var hoveringAuthor: String?
+
     func setEditingLayout(_ editing: Bool) {
         isEditingLayout = editing
         // 只有编辑时才接鼠标事件；其余时候整个窗口对鼠标隐形，
         // 免得那一大片透明区域挡住后面的东西。
         ignoresMouseEvents = !editing
         dragOverlay?.showsGuide = editing
+        dragOverlay?.isEditing = editing
         if editing {
             // 要成为 key window 才收得到 Esc
             makeKeyAndOrderFront(nil)
@@ -91,7 +102,9 @@ final class HUDWindow: NSWindow {
         restoreSavedFrame()
 
         installUserScript()
+        installMessageTracking()
         bindPreferences()
+        startHoverTracking()
         reload()
     }
 
@@ -125,6 +138,10 @@ final class HUDWindow: NSWindow {
         .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
         .sink { [weak self] _, _, _, _ in self?.injectCSS() }
         .store(in: &cancellables)
+
+        prefs.$showOutline
+            .sink { [weak self] on in self?.dragOverlay?.showsOutline = on }
+            .store(in: &cancellables)
 
         // 调试消息开关写在 URL 参数里，改了得重新载入
         prefs.$showDebugMessages
@@ -192,6 +209,82 @@ final class HUDWindow: NSWindow {
           setTimeout(apply, 1500);
         })();
         """
+    }
+
+    /// 让页面定期上报每条弹幕的位置和作者。
+    /// 有了这些矩形，才能判断鼠标是不是悬在弹幕上——窗口平时对鼠标隐形，
+    /// 只有悬在弹幕上时才临时接收事件，这样右键回复和「不挡路」能同时成立。
+    private func installMessageTracking() {
+        let controller = webView.configuration.userContentController
+        controller.removeScriptMessageHandler(forName: "danmuRects")
+        controller.add(MessageRectBridge(window: self), name: "danmuRects")
+
+        let js = """
+        (function () {
+          function report() {
+            try {
+              var nodes = document.querySelectorAll(
+                'yt-live-chat-text-message-renderer, yt-live-chat-paid-message-renderer'
+              );
+              var out = [];
+              for (var i = 0; i < nodes.length; i++) {
+                var r = nodes[i].getBoundingClientRect();
+                if (r.height <= 0 || r.bottom < 0 || r.top > window.innerHeight) { continue; }
+                var nameEl = nodes[i].querySelector('#author-name');
+                out.push({
+                  x: r.left, y: r.top, w: r.width, h: r.height,
+                  name: nameEl ? nameEl.textContent.trim() : ''
+                });
+              }
+              window.webkit.messageHandlers.danmuRects.postMessage({
+                items: out, viewportHeight: window.innerHeight
+              });
+            } catch (e) {}
+          }
+          setInterval(report, 250);
+          report();
+        })();
+        """
+        controller.addUserScript(WKUserScript(
+            source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: true
+        ))
+    }
+
+    /// 轮询鼠标位置。用轮询而不是全局事件监听，是为了不碰辅助功能权限。
+    private func startHoverTracking() {
+        let timer = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.updateHover() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
+    }
+
+    private func updateHover() {
+        guard !isEditingLayout, isVisible else { return }
+
+        let screenPoint = NSEvent.mouseLocation
+        guard frame.contains(screenPoint) else {
+            applyHover(nil)
+            return
+        }
+
+        let local = NSPoint(x: screenPoint.x - frame.minX, y: screenPoint.y - frame.minY)
+        let hit = messageHits.first { $0.rect.contains(local) }
+        applyHover(hit?.author)
+    }
+
+    private func applyHover(_ author: String?) {
+        guard hoveringAuthor != author else { return }
+        hoveringAuthor = author
+        dragOverlay?.hoveredAuthor = author
+        ignoresMouseEvents = author == nil
+    }
+
+    /// 右键弹幕时用的
+    fileprivate func replyToHovered() {
+        guard let author = hoveringAuthor, !author.isEmpty else { return }
+        ComposerModel.shared.prepareReply(to: author)
+        (NSApp.delegate as? AppDelegate)?.openComposer()
     }
 
     /// 页面一加载就自动注入，比等 didFinish 再 evaluate 可靠得多
@@ -334,23 +427,81 @@ extension HUDWindow: WKNavigationDelegate {
     }
 }
 
+/// 把 JS 上报的弹幕矩形转成 AppKit 坐标存起来。
+/// 网页坐标原点在左上，NSView 在左下，得翻一下 y。
+private final class MessageRectBridge: NSObject, WKScriptMessageHandler {
+    private weak var window: HUDWindow?
+
+    init(window: HUDWindow) {
+        self.window = window
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let payload = message.body as? [String: Any],
+              let items = payload["items"] as? [[String: Any]],
+              let viewportHeight = payload["viewportHeight"] as? Double else { return }
+
+        let hits = items.compactMap { item -> HUDWindow.MessageHit? in
+            guard let x = item["x"] as? Double, let y = item["y"] as? Double,
+                  let w = item["w"] as? Double, let h = item["h"] as? Double else { return nil }
+            return HUDWindow.MessageHit(
+                rect: NSRect(x: x, y: viewportHeight - y - h, width: w, height: h),
+                author: item["name"] as? String ?? ""
+            )
+        }
+
+        Task { @MainActor in
+            self.window?.messageHits = hits
+        }
+    }
+}
+
 /// 透明拖动层：按住任意位置都能挪窗口，滚轮转发给底下的 WebView。
 /// 编辑布局时还会画一圈边框，让人看清窗口到底占多大。
 private final class DragOverlay: NSView {
     weak var forwardTarget: NSView?
 
+    var isEditing = false
+    /// 鼠标底下那条弹幕的作者，非空时这层才接管点击
+    var hoveredAuthor: String? {
+        didSet { needsDisplay = true }
+    }
+
     var showsGuide = false {
         didSet { needsDisplay = true }
     }
 
+    /// 常驻的淡边框。没弹幕时窗口全透明，不画点东西根本找不着它在哪。
+    var showsOutline = false {
+        didSet { needsDisplay = true }
+    }
+
     override func mouseDown(with event: NSEvent) {
-        Log.write("DragOverlay.mouseDown showsGuide=\(showsGuide)")
+        // 悬在弹幕上时左键也当回复用，别把窗口拖跑了
+        if !isEditing, hoveredAuthor != nil {
+            (window as? HUDWindow)?.replyToHovered()
+            return
+        }
         window?.performDrag(with: event)
     }
 
+    override func rightMouseDown(with event: NSEvent) {
+        guard let author = hoveredAuthor, !author.isEmpty else { return }
+        let menu = NSMenu()
+        let reply = NSMenuItem(title: "回复 @\(author)", action: #selector(replyAction), keyEquivalent: "")
+        reply.target = self
+        menu.addItem(reply)
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func replyAction() {
+        (window as? HUDWindow)?.replyToHovered()
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // 编辑模式才接管点击；平时让事件穿到下面，免得挡住网页交互
-        showsGuide ? super.hitTest(point) : nil
+        // 编辑模式全盘接管；平时只在鼠标压着某条弹幕时才接，
+        // 其余区域一律放行，免得挡住后面的窗口
+        (isEditing || hoveredAuthor != nil) ? super.hitTest(point) : nil
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -358,7 +509,15 @@ private final class DragOverlay: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard showsGuide else { return }
+        guard showsGuide else {
+            if showsOutline {
+                let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+                path.lineWidth = 1
+                NSColor.white.withAlphaComponent(0.22).setStroke()
+                path.stroke()
+            }
+            return
+        }
 
         // 只描边不铺色，免得整块蓝把弹幕盖住
         let inset = bounds.insetBy(dx: 1, dy: 1)

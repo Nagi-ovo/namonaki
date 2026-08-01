@@ -28,7 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setUpMainMenu()
         setUpStatusItem()
 
-        GlobalHotKey.shared.onFire = { [weak self] in self?.toggleEditing() }
+        GlobalHotKey.shared.onFire = { [weak self] action in
+            switch action {
+            case .toggleEditing: self?.toggleEditing()
+            case .compose: self?.showComposer()
+            }
+        }
         GlobalHotKey.shared.register()
 
         // 没配地址时直接把设置面板推到脸上，省得找
@@ -97,16 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
-        let visible = NSMenuItem(title: "显示弹幕窗", action: #selector(toggleHUD), keyEquivalent: "")
-        visible.target = self
-        visible.state = (hud?.isVisible ?? false) ? .on : .off
-        menu.addItem(visible)
-
-        let compose = NSMenuItem(title: "发弹幕…", action: #selector(showComposer), keyEquivalent: "d")
+        // —— 常用动作 ——
+        let compose = NSMenuItem(title: "发弹幕…　⌥⌘D", action: #selector(showComposer), keyEquivalent: "")
         compose.target = self
         menu.addItem(compose)
-
-        menu.addItem(.separator())
 
         let editing = NSMenuItem(title: "调整位置和大小　⌥⌘E", action: #selector(toggleEditing), keyEquivalent: "")
         editing.target = self
@@ -115,43 +114,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
+        // —— 显示方式（开关类）——
+        let visible = NSMenuItem(title: "显示弹幕窗", action: #selector(toggleHUD), keyEquivalent: "")
+        visible.target = self
+        visible.state = (hud?.isVisible ?? false) ? .on : .off
+        menu.addItem(visible)
+
         let top = NSMenuItem(title: "始终置顶", action: #selector(toggleAlwaysOnTop), keyEquivalent: "")
         top.target = self
         top.state = prefs.alwaysOnTop ? .on : .off
         menu.addItem(top)
 
-        menu.addItem(.separator())
-
-        let opacityHeader = NSMenuItem(title: "不透明度 \(Int(prefs.opacity * 100))%", action: nil, keyEquivalent: "")
-        opacityHeader.isEnabled = false
-        menu.addItem(opacityHeader)
-        for value in [1.0, 0.85, 0.7, 0.5, 0.35] {
-            let entry = NSMenuItem(title: "\(Int(value * 100))%", action: #selector(setOpacity(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.representedObject = value
-            entry.state = abs(prefs.opacity - value) < 0.02 ? .on : .off
-            menu.addItem(entry)
-        }
+        let outline = NSMenuItem(title: "显示窗口轮廓", action: #selector(toggleOutline), keyEquivalent: "")
+        outline.target = self
+        outline.state = prefs.showOutline ? .on : .off
+        menu.addItem(outline)
 
         menu.addItem(.separator())
 
-        let fill = NSMenuItem(title: "铺满屏幕高度", action: #selector(fillHeight), keyEquivalent: "")
-        fill.target = self
-        menu.addItem(fill)
+        // —— 摆放（收进子菜单）——
+        let placement = NSMenuItem(title: "摆放", action: nil, keyEquivalent: "")
+        placement.submenu = buildPlacementMenu()
+        menu.addItem(placement)
 
-        let remember = NSMenuItem(title: "记住当前位置", action: #selector(rememberSpot), keyEquivalent: "")
-        remember.target = self
-        menu.addItem(remember)
+        let opacity = NSMenuItem(title: "不透明度（\(Int(prefs.opacity * 100))%）", action: nil, keyEquivalent: "")
+        opacity.submenu = buildOpacityMenu()
+        menu.addItem(opacity)
 
-        let recall = NSMenuItem(title: "回到记住的位置", action: #selector(recallSpot), keyEquivalent: "")
-        recall.target = self
-        recall.isEnabled = !prefs.bookmarkFrame.isEmpty
-        menu.addItem(recall)
+        menu.addItem(.separator())
 
-        let reset = NSMenuItem(title: "窗口找不着了，拉回中间", action: #selector(resetPosition), keyEquivalent: "")
-        reset.target = self
-        menu.addItem(reset)
-
+        // —— 维护 ——
         let reload = NSMenuItem(title: "重新加载", action: #selector(reload), keyEquivalent: "r")
         reload.target = self
         menu.addItem(reload)
@@ -166,6 +158,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quit.target = self
         menu.addItem(quit)
 
+        return menu
+    }
+
+    private func buildPlacementMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        let remember = NSMenuItem(title: "记住当前位置", action: #selector(rememberSpot), keyEquivalent: "")
+        remember.target = self
+        menu.addItem(remember)
+
+        let recall = NSMenuItem(title: "回到记住的位置", action: #selector(recallSpot), keyEquivalent: "")
+        recall.target = self
+        recall.isEnabled = !prefs.bookmarkFrame.isEmpty
+        menu.addItem(recall)
+
+        menu.addItem(.separator())
+
+        let fill = NSMenuItem(title: "铺满屏幕高度", action: #selector(fillHeight), keyEquivalent: "")
+        fill.target = self
+        menu.addItem(fill)
+
+        let reset = NSMenuItem(title: "找不着了，拉回屏幕中间", action: #selector(resetPosition), keyEquivalent: "")
+        reset.target = self
+        menu.addItem(reset)
+
+        return menu
+    }
+
+    private func buildOpacityMenu() -> NSMenu {
+        let menu = NSMenu()
+        for value in [1.0, 0.85, 0.7, 0.5, 0.35] {
+            let entry = NSMenuItem(title: "\(Int(value * 100))%", action: #selector(setOpacity(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = value
+            entry.state = abs(prefs.opacity - value) < 0.02 ? .on : .off
+            menu.addItem(entry)
+        }
         return menu
     }
 
@@ -190,6 +219,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 编辑时得能点到它，顺手抬到最前
             hud.orderFrontRegardless()
         }
+        statusItem?.menu = buildMenu()
+    }
+
+    @objc private func toggleOutline() {
+        prefs.showOutline.toggle()
         statusItem?.menu = buildMenu()
     }
 
@@ -222,6 +256,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func reload() {
         hud?.reload()
+    }
+
+    func openComposer() {
+        showComposer()
+        ComposerModel.shared.focus()
     }
 
     @objc private func showComposer() {

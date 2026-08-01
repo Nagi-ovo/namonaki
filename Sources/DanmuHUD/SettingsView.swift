@@ -289,6 +289,15 @@ private struct WindowTab: View {
                 }
             }
 
+            Toggle(isOn: $prefs.showOutline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("显示窗口轮廓")
+                    Text("画一圈淡边框标出窗口范围。没弹幕时窗口是全透明的，容易找不着")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Divider()
 
             PositionEditor()

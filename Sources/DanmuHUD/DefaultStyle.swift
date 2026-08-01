@@ -31,6 +31,22 @@ enum DefaultStyle {
     }
     ::-webkit-scrollbar { display: none !important; }
 
+    /* 一条弹幕都没有时窗口是全透明的，等于隐形，找不着它在哪。
+       空状态放个淡淡的占位框，来消息后自动消失。 */
+    #items:empty::before {
+      content: "弹幕会出现在这里";
+      display: block;
+      margin: 10px 8px;
+      padding: 14px 12px;
+      border: 1px dashed rgba(255, 255, 255, 0.22);
+      border-radius: 9px;
+      background: rgba(12, 12, 14, 0.22);
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 13px;
+      text-align: center;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
     /* ---------- 单条弹幕 ---------- */
     /* 衬底：浅色画面上光靠文字阴影读不清，垫一层深色才稳。
        叠在深色游戏画面上时，把设置里的浓度拖到 0 就完全透明。 */
@@ -127,9 +143,12 @@ enum DefaultStyle {
       margin: 8px 14px !important;
       padding: 10px 12px !important;
       border: none !important;
-      border-left: 2px solid rgba(235, 197, 133, 0.75) !important;
-      border-radius: 2px !important;
-      background: rgba(255, 255, 255, 0.06) !important;
+      border-left: 3px solid rgba(235, 197, 133, 0.9) !important;
+      border-radius: 9px !important;
+      /* 跟普通弹幕用同一套深色衬底，再深一点点以示区别。
+         之前用的浅白底在浅色画面上等于没有。 */
+      background: rgba(12, 12, 14, calc(var(--blc-backdrop-alpha) + 0.14)) !important;
+      backdrop-filter: blur(2px);
       box-shadow: none !important;
       animation: blc-in 300ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
     }
@@ -150,7 +169,8 @@ enum DefaultStyle {
     }
     yt-live-chat-paid-message-renderer #purchase-amount,
     yt-live-chat-paid-message-renderer #purchase-amount-chip {
-      color: rgba(255, 255, 255, 0.78) !important;
+      color: rgba(235, 197, 133, 0.95) !important;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6) !important;
       font-size: calc(var(--blc-font-size) - 4px) !important;
       font-weight: 400 !important;
       background: transparent !important;

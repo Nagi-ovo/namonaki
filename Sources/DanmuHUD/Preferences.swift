@@ -8,7 +8,7 @@ final class Preferences: ObservableObject {
     static let shared = Preferences()
 
     /// 内置样式表每次改版就 +1
-    private static let currentCSSVersion = 2
+    private static let currentCSSVersion = 4
 
     @Published var roomURL: String {
         didSet { defaults.set(roomURL, forKey: Keys.roomURL) }
@@ -47,6 +47,10 @@ final class Preferences: ObservableObject {
     @Published var showDebugMessages: Bool {
         didSet { defaults.set(showDebugMessages, forKey: Keys.showDebugMessages) }
     }
+    /// 始终画一圈极淡的边框，标出窗口范围——没弹幕时窗口全透明，容易找不着
+    @Published var showOutline: Bool {
+        didSet { defaults.set(showOutline, forKey: Keys.showOutline) }
+    }
 
     /// 覆盖 CSS 里那几个变量的默认值，注入时拼在样式表后面
     var variableCSS: String {
@@ -76,6 +80,7 @@ final class Preferences: ObservableObject {
         static let avatarSize = "avatarSize"
         static let backdropAlpha = "backdropAlpha"
         static let showDebugMessages = "showDebugMessages"
+        static let showOutline = "showOutline"
     }
 
     private init() {
@@ -91,6 +96,7 @@ final class Preferences: ObservableObject {
         avatarSize = defaults.object(forKey: Keys.avatarSize) as? Double ?? 26
         backdropAlpha = defaults.object(forKey: Keys.backdropAlpha) as? Double ?? 0.38
         showDebugMessages = defaults.bool(forKey: Keys.showDebugMessages)
+        showOutline = defaults.bool(forKey: Keys.showOutline)
 
         // 内置样式改版后，把还停在旧版本的用户升上来，
         // 否则新加的规则（比如衬底）永远不会生效

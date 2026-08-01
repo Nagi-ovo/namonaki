@@ -4,9 +4,14 @@ import AppKit
 /// 发弹幕的小输入框。弹幕窗平时对鼠标隐形，所以发送单独开一个能聚焦的小窗。
 struct ComposerView: View {
     @ObservedObject private var account = BilibiliAccount.shared
-    @State private var text = ""
+    @ObservedObject private var model = ComposerModel.shared
     @State private var status: Status = .idle
     @FocusState private var focused: Bool
+
+    private var text: String {
+        get { model.text }
+        nonmutating set { model.text = newValue }
+    }
 
     private enum Status: Equatable {
         case idle
@@ -18,7 +23,7 @@ struct ComposerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                TextField("说点什么…", text: $text)
+                TextField("说点什么…", text: $model.text)
                     .textFieldStyle(.plain)
                     .font(.system(size: 15))
                     .focused($focused)
@@ -72,6 +77,7 @@ struct ComposerView: View {
         .padding(14)
         .frame(width: 420)
         .onAppear { focused = true }
+        .onChange(of: model.focusToken) { _, _ in focused = true }
     }
 
     private var hint: String {
