@@ -21,13 +21,15 @@ macOS 上的 B 站直播弹幕悬浮窗。原生 AppKit 写的，平时对鼠标
 这个 app 自己不连 B 站，弹幕来自 [blivechat](https://github.com/xfgryujk/blivechat)——
 一个成熟的开源弹幕服务。所以得先把它跑起来。
 
-需要 [uv](https://docs.astral.sh/uv/)（跑 Python）和 [Node.js](https://nodejs.org/)（编译前端）：
+需要 [uv](https://docs.astral.sh/uv/) 和 [Node.js](https://nodejs.org/)：
 
 ```sh
-git clone https://github.com/xfgryujk/blivechat.git
-cd blivechat/frontend && npm i && npm run build   # 或者用 bun，快很多
-cd .. && uv run main.py --host 127.0.0.1 --port 12450
+git clone https://github.com/xfgryujk/blivechat.git && cd blivechat
+cd frontend && npm i && npm run build && cd ..   # 用 bun 更快
+uv run main.py --host 127.0.0.1 --port 12450     # 依赖会自动装
 ```
+
+前端那步省不掉——blivechat 的网页要先编译出来，不然打开是 404。
 
 跑起来后打开 http://127.0.0.1:12450 ：
 
