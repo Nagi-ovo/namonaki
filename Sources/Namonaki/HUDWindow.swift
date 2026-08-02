@@ -293,6 +293,52 @@ final class HUDWindow: NSWindow {
         """
     }
 
+    /// 新消息到达时自动滚到底。
+    ///
+    /// blivechat 自己有这套逻辑，但它按 #items 的高度判断该不该滚，而我们插入的
+    /// 历史容器是 #items 的兄弟节点，改变了滚动容器的真实高度，它就算不准了。
+    ///
+    /// 这段必须独立于历史存在与否——之前把它挂在历史容器上，没有历史时就完全失效。
+    private func installAutoFollow() {
+        let js = """
+        (function () {
+          var sc = document.querySelector('#item-scroller');
+          var items = document.querySelector('#items');
+          if (!sc || !items) { return 'no-target'; }
+          if (sc.__blcFollow) { return 'already'; }
+          sc.__blcFollow = true;
+
+          var following = true;
+          function atBottom() {
+            return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+          }
+          // 只有用户自己动滚轮或按键才可能退出跟随。程序滚动也会触发 scroll
+          // 事件，拿它判断会把自己的滚动误当成用户在往上翻。
+          function onUserIntent() {
+            setTimeout(function () { following = atBottom(); }, 60);
+          }
+          sc.addEventListener('wheel', onUserIntent, { passive: true });
+          sc.addEventListener('keydown', onUserIntent);
+
+          function follow() {
+            if (!following) { return; }
+            sc.scrollTop = sc.scrollHeight;
+          }
+          new MutationObserver(function () {
+            follow();
+            // 表情图加载完会再撑高一次，补一脚
+            setTimeout(follow, 120);
+          }).observe(items, { childList: true, subtree: true, characterData: true });
+
+          follow();
+          return 'installed';
+        })();
+        """
+        webView.evaluateJavaScript(js) { result, error in
+            Log.write("installAutoFollow -> \(result ?? "nil") error=\(error?.localizedDescription ?? "none")")
+        }
+    }
+
     /// 把上次存下来的弹幕铺回窗口，免得冷启动时一片空白
     private func restoreHistory() {
         let items = HistoryStore.shared.all
@@ -315,75 +361,6 @@ final class HUDWindow: NSWindow {
               return host;
             }
 
-            // 历史是 #items 的兄弟，blivechat 用 #items 自身高度判断是否需要滚动，
-            // 因而本次消息还不够一屏时会漏掉 scrollToBottom()。这里补齐这一种布局，
-            // 但跟随状态由用户滚动意图控制，往上翻历史时绝不强制拉回底部。
-            function installHistoryAutoFollow(sc, liveItems) {
-              var old = sc.__blcHistoryAutoFollow;
-              if (old && old.items === liveItems) { return old; }
-              if (old) {
-                old.mutations.disconnect();
-                if (old.resize) { old.resize.disconnect(); }
-                if (old.frame) { cancelAnimationFrame(old.frame); }
-                sc.removeEventListener('scroll', old.onScroll);
-                sc.removeEventListener('wheel', old.onUserScroll);
-                sc.removeEventListener('keydown', old.onKeyDown);
-              }
-
-              var state = {
-                items: liveItems,
-                following: true,
-                frame: 0,
-                resize: null
-              };
-              function isAtBottom() {
-                return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 15;
-              }
-              function scheduleFollow() {
-                if (!state.following || state.frame) { return; }
-                state.frame = requestAnimationFrame(function () {
-                  state.frame = 0;
-                  if (!state.following || !document.getElementById('blc-history')) { return; }
-                  sc.scrollTop = sc.scrollHeight;
-                });
-              }
-
-              // scroll 事件本身也可能来自布局变化；它只负责确认“已经回到底部”。
-              // 真正取消跟随只响应用户输入，避免程序滚动的延迟事件误判。
-              state.onScroll = function () {
-                if (isAtBottom()) { state.following = true; }
-              };
-              state.onUserScroll = function () {
-                state.following = false;
-                requestAnimationFrame(function () {
-                  if (isAtBottom()) { state.following = true; }
-                });
-              };
-              state.onKeyDown = function (event) {
-                if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar'].indexOf(event.key) >= 0) {
-                  state.onUserScroll();
-                }
-              };
-
-              sc.addEventListener('scroll', state.onScroll, { passive: true });
-              sc.addEventListener('wheel', state.onUserScroll, { passive: true });
-              sc.addEventListener('keydown', state.onKeyDown);
-
-              state.mutations = new MutationObserver(scheduleFollow);
-              state.mutations.observe(liveItems, {
-                childList: true,
-                subtree: true,
-                characterData: true
-              });
-              if (typeof ResizeObserver !== 'undefined') {
-                state.resize = new ResizeObserver(scheduleFollow);
-                state.resize.observe(liveItems);
-              }
-              state.scheduleFollow = scheduleFollow;
-              sc.__blcHistoryAutoFollow = state;
-              return state;
-            }
-
             // #items 的高度由 blivechat 用 JS 控着（滚动动画要用），
             // 塞进去的内容撑不开它，整块就塌成 0 高。
             // 插到滚动容器里、它管辖的 #item-offset 之前，才能正常占位。
@@ -399,12 +376,7 @@ final class HUDWindow: NSWindow {
                 placed = true;
               }
 
-              var follow = installHistoryAutoFollow(sc, liveItems);
-              if (placed) {
-                follow.following = true;
-                sc.scrollTop = sc.scrollHeight;
-                follow.scheduleFollow();
-              }
+              if (placed) { sc.scrollTop = sc.scrollHeight; }
             }
 
             place();
@@ -650,6 +622,7 @@ extension HUDWindow: WKNavigationDelegate {
         Task {
             try? await Task.sleep(for: .milliseconds(600))
             self.restoreHistory()
+            self.installAutoFollow()
         }
     }
 }
