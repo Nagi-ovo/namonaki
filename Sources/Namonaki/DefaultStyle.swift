@@ -20,7 +20,7 @@ enum DefaultStyle {
     yt-live-chat-renderer,
     yt-live-chat-item-list-renderer,
     #item-scroller,
-    #items {
+    #item-offset #items {
       background: transparent !important;
     }
     body {
@@ -34,7 +34,9 @@ enum DefaultStyle {
 
     /* 一条弹幕都没有时窗口是全透明的，等于隐形，找不着它在哪。
        空状态放个淡淡的占位框，来消息后自动消失。 */
-    #items:empty::before {
+    /* 必须限定在 #item-offset 内：blivechat 的 Ticker 组件也用了 id="items"，
+       而且在 DOM 顺序上排在前面，不限定就作用到那个上面去了 */
+    #item-offset #items:empty::before {
       content: "弹幕会出现在这里";
       display: block;
       margin: 10px 8px;
@@ -54,14 +56,6 @@ enum DefaultStyle {
       display: block !important;
       position: relative !important;
       width: 100% !important;
-    }
-
-    /* blivechat 靠顶部内边距把消息推到底部（聊天室常见做法）。
-       历史容器插在它上面时，那块内边距就露成一大片空白了。 */
-    #item-offset {
-      padding-top: 0 !important;
-      margin-top: 0 !important;
-      min-height: 0 !important;
     }
 
     /* 上次留下的历史消息。别靠调淡来区分——那看着像没加载完，

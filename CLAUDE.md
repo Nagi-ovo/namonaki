@@ -42,6 +42,14 @@ Info.plist 里 `NSPrefersDisplaySafeAreaCompatibilityMode = false`（关掉刘�
 （`//i0.hdslb.com/…`），页面是 http，头像就按 http 请求。Info.plist 里放行
 `NSAllowsArbitraryLoadsInWebContent`。OBS 用 CEF 没这个限制，所以那边一直是好的。
 
+**blivechat 页面上有两个 `id="items"`**——`Ticker.vue`（顶部付费滚动条）一个，
+`ChatRenderer/index.vue`（真正的弹幕容器）一个，而 Ticker 在 DOM 顺序上排在前面。
+所以 `document.querySelector('#items')` 拿到的一直是 Ticker 那个。注入的 JS 和 CSS
+凡是要选弹幕容器，**必须写成 `#item-offset #items`**。blivechat 自己用 Vue 的 ref，
+不受影响，坏的只有我们注入的部分——这个坑一次报废了三轮修复。
+
+同理，存历史 HTML 前要把节点里的 `id` 剥掉，否则铺回页面后又制造一批同 id 元素。
+
 **WKWebView 会吃掉所有鼠标事件**，窗口就拖不动。靠一层透明的 `DragOverlay` 接管拖动，
 滚轮再转发回 WebView。它的 `hitTest` 只在编辑模式返回自己。
 

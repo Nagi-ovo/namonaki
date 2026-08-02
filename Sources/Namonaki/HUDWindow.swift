@@ -277,14 +277,30 @@ final class HUDWindow: NSWindow {
           var seen = new WeakSet();
           function reportNew() {
             try {
-              var nodes = document.querySelectorAll(
+              // 限定在真容器内取，且排除铺回来的历史，否则历史会自我复制。
+              // 之前没限定范围，把带 id="items" 的节点也存了进去，导致页面上
+              // 出现两个 #items，后续所有查询全部命中假货。
+              var scope = document.querySelector('#item-offset #items');
+              if (!scope) { return; }
+              var nodes = scope.querySelectorAll(
                 'yt-live-chat-text-message-renderer:not([data-history]),'
                 + 'yt-live-chat-paid-message-renderer:not([data-history])'
               );
               for (var i = 0; i < nodes.length; i++) {
                 if (seen.has(nodes[i])) { continue; }
                 seen.add(nodes[i]);
-                window.webkit.messageHandlers.danmuHistory.postMessage(nodes[i].outerHTML);
+                var clone = nodes[i].cloneNode(true);
+                // id 会和页面上的元素撞车（尤其 #items / #item-offset），
+                // 存之前一律剥掉
+                clone.removeAttribute('id');
+                var withId = clone.querySelectorAll('[id]');
+                for (var k = 0; k < withId.length; k++) {
+                  var keep = withId[k].id;
+                  if (keep === 'items' || keep === 'item-offset' || keep === 'item-scroller') {
+                    withId[k].removeAttribute('id');
+                  }
+                }
+                window.webkit.messageHandlers.danmuHistory.postMessage(clone.outerHTML);
               }
             } catch (e) {}
           }
@@ -303,7 +319,7 @@ final class HUDWindow: NSWindow {
         let js = """
         (function () {
           var sc = document.querySelector('#item-scroller');
-          var items = document.querySelector('#items');
+          var items = document.querySelector('#item-offset #items');
           if (!sc || !items) { return 'no-target'; }
           if (sc.__blcFollow) { return 'already'; }
           sc.__blcFollow = true;
@@ -367,7 +383,7 @@ final class HUDWindow: NSWindow {
             function place() {
               var sc = document.querySelector('#item-scroller');
               var offset = document.querySelector('#item-offset');
-              var liveItems = document.querySelector('#items');
+              var liveItems = document.querySelector('#item-offset #items');
               if (!sc || !offset || !liveItems) { return; }
 
               var placed = false;
