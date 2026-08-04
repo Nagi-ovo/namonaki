@@ -14,7 +14,7 @@ macOS 菜单栏 app，在桌面上悬浮一个 B 站直播弹幕窗。窗口和�
 
 ```
 ./build.sh          # swift build + 组 .app + 本地签名，产物在 build/Namonaki.app
-pkill -x Namonaki; open build/Namonaki.app    # 双击不会重启已在运行的实例，必须先杀
+pkill -x Namonaki; sleep 2; open build/Namonaki.app   # 双击不会重启已在运行的实例，必须先杀
 ```
 
 不再依赖 Python / uv 进程。App 自己在 `127.0.0.1:12451` 提供渲染页和 WebSocket relay，
@@ -36,6 +36,12 @@ cd web && bun install && bun run build     # 直接写进 ../Resources/Renderer
 HUD 直接订阅它，OBS 从 `LocalRelayServer` 收。OBS 必须用设置页「复制 OBS 地址」生成的
 `127.0.0.1:12451` URL，不要再用旧 blivechat 房间 URL。切换过来前先停掉旧 Python
 blivechat，否则它残留的开放平台 session 仍会占名额。
+
+**进程被 SIGTERM 干掉会漏 session，下次启动直接撞 7010。** pkill、注销、关机都只发
+SIGTERM，默认动作当场杀进程，`end_game` 没机会发出去，B 站那边要等超时才放名额。
+`AppDelegate.installTerminationSignalHandlers` 接管 SIGTERM/SIGINT/SIGHUP 转成
+`NSApp.terminate`，走正常清理；清理有 5 秒上限，免得卡住注销。代价是退出不再是瞬间的，
+所以重启命令要 `sleep 2`。再发一次信号可以强制立即退出。
 
 **收弹幕的网络边界是硬编码 allowlist。** 身份码只能 POST 到
 `https://api1.blive.chat` / `api2.blive.chat` 的 start / heartbeat / end 三个路径；

@@ -12,8 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let prefs = Preferences.shared
     private let runtime = OpenLiveRuntime.shared
     private var terminationPending = false
+    private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installTerminationSignalHandlers()
         runtime.start(authCode: prefs.authCode)
 
         prefs.$authCode
@@ -64,11 +66,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// pkill, logging out and shutting down all just send SIGTERM, whose default action
+    /// kills us on the spot. The Bilibili session then stays open upstream until it times
+    /// out, and the next launch walks straight into 7010. Take the signal over and route it
+    /// through the normal quit path so `end_game` actually gets sent.
+    private func installTerminationSignalHandlers() {
+        for number in [SIGTERM, SIGINT, SIGHUP] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler { [weak self] in
+                MainActor.assumeIsolated {
+                    // A second signal means the cleanup is stuck. Let the user out.
+                    guard let self, !self.terminationPending else { exit(0) }
+                    // Terminating from inside a main-queue callout deadlocks: the nested
+                    // event loop AppKit spins for `terminateLater` cannot re-enter the main
+                    // queue, so the cleanup task never gets to reply. Hop to the run loop,
+                    // which is where the Quit menu item calls from anyway.
+                    RunLoop.main.perform(inModes: [.common]) {
+                        MainActor.assumeIsolated { NSApp.terminate(nil) }
+                    }
+                }
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminationPending else { return .terminateLater }
         terminationPending = true
         Task { [runtime] in
-            await runtime.shutdown()
+            // Logout and shutdown only grant us a few seconds. If the cleanup call cannot
+            // finish in time, leave anyway rather than holding up the whole machine.
+            let cleanup = Task { await runtime.shutdown() }
+            let deadline = Task {
+                try await Task.sleep(for: .seconds(5))
+                cleanup.cancel()
+            }
+            await cleanup.value
+            deadline.cancel()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
