@@ -12,8 +12,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Namonaki "$APP/Contents/MacOS/Namonaki"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/ThirdPartyNotices.md "$APP/Contents/Resources/ThirdPartyNotices.md"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 if [ ! -f Resources/Renderer/index.html ]; then
-    echo "缺少 Resources/Renderer，先编译 ../blivechat/frontend" >&2
+    echo "缺少 Resources/Renderer，先在 web/ 里 bun run build" >&2
     exit 1
 fi
 cp -R Resources/Renderer "$APP/Contents/Resources/Renderer"

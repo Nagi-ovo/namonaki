@@ -4,3 +4,4 @@ build/
 *.xcuserdatad
 .swiftpm/
 web/node_modules/
+.claude/skills/

@@ -101,6 +101,19 @@ WebView 扫码登录 → 取 Cookie 里的 `SESSDATA` / `bili_jct` → 存钥匙
 抓包方法：浏览器扩展的网络面板抓不到这条 POST，得在页面里 hook
 `XMLHttpRequest.prototype.send` 和 `window.fetch` 才拿得到。
 
+## 图标
+
+**当前这版是临时的，不是最终 logo 方案。** app 图标是 AI 生成后手工处理的位图，
+源图在 `Resources/AppIcon.icns`，没有矢量源文件——要改就得重做。
+
+两个坑：生成图的圆角半径是 824 尺度下的 ~225，比 macOS 标准的 185.4 更圆，
+直接按标准半径切会在四角留一圈白边，得先把画面放大约 4.6% 再切。
+另外 16/32pt 用的是只有气泡的简化版，128pt 以上才用带拖尾的完整版——
+按**点数**而不是像素数分，所以 `icon_32x32@2x`（64px）也归简化版。
+
+菜单栏图标是 `MenuBarIcon.swift` 用代码画的模板图，不能换成彩色 app 图标：
+模板图才会跟随深浅色和菜单展开时的高亮。
+
 ## 样式
 
 **两套，得手动对齐。** HUD 用 `DanmakuStyle.swift`（纯 Swift 常量），OBS 用

@@ -118,10 +118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "bubble.left.and.bubble.right",
-            accessibilityDescription: "弹幕"
-        )
+        item.button?.image = MenuBarIcon.make()
+        item.button?.image?.accessibilityDescription = "弹幕"
         item.menu = buildMenu()
         statusItem = item
 
