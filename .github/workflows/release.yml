@@ -1,0 +1,57 @@
+name: Release
+
+# Tag it and the packages build themselves. Nothing here is signed with an Apple
+# developer identity on purpose -- build.sh only does the free ad-hoc signature.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, e.g. v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Work out the version
+        id: v
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Show the toolchain
+        run: swift --version
+
+      - name: Build the universal package
+        run: |
+          ./build.sh --universal
+          lipo -info build/Namonaki.app/Contents/MacOS/Namonaki
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent Namonaki.app \
+            "Namonaki-${{ steps.v.outputs.version }}-universal.zip"
+
+      # Second pass reuses build/, and build.sh only removes the .app, so the zip
+      # written above survives.
+      - name: Build the arm64 package
+        run: |
+          ./build.sh
+          lipo -info build/Namonaki.app/Contents/MacOS/Namonaki
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent Namonaki.app \
+            "Namonaki-${{ steps.v.outputs.version }}-arm64.zip"
+
+      - name: Attach both to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ steps.v.outputs.tag }}" build/*.zip --clobber
