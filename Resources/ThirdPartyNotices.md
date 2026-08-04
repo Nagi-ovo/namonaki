@@ -1,6 +1,8 @@
 # Third-party notices
 
-Namonaki 的内置弹幕渲染页基于 blivechat。
+Namonaki 的开放平台协议实现参考自 blivechat，早期版本还直接内嵌过它的前端页面。
+渲染页现在是本项目自己写的，但换取开放平台会话仍然走 blivechat 维护的公共服务
+`api1.blive.chat` / `api2.blive.chat`。
 
 MIT License
 
