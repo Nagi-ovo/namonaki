@@ -11,6 +11,9 @@ final class OpenLiveRuntime: ObservableObject {
         case authenticating
         case connected(roomID: Int)
         case reconnecting(attempt: Int)
+        /// Backed off to a slow retry. Something needs attention, but we never stop
+        /// trying — the danmaku has to be able to come back on its own.
+        case waiting(reason: String)
         case failed(String)
 
         var label: String {
@@ -20,6 +23,7 @@ final class OpenLiveRuntime: ObservableObject {
             case .authenticating: "正在鉴权"
             case .connected: "已连接"
             case .reconnecting(let attempt): "正在重连（第 \(attempt) 次）"
+            case .waiting(let reason): "\(reason)，每分钟自动重试"
             case .failed(let message): message
             }
         }
@@ -116,9 +120,15 @@ final class OpenLiveRuntime: ObservableObject {
         relay.stop()
     }
 
+    /// Fast reconnects before we drop to the slow lane. Past this the network is
+    /// genuinely down, and hammering it every 20 seconds helps nobody.
+    private static let fastRetryBudget = 30
+    private static let slowRetryDelay = 60
+
     private func connectionLoop(authCode: String, generation: Int) async {
         var retryCount = 0
         var totalRetryCount = 0
+        var slowRetryReason: (label: String, status: String)?
 
         while !Task.isCancelled, self.generation == generation {
             do {
@@ -150,21 +160,30 @@ final class OpenLiveRuntime: ObservableObject {
                     active: active,
                     generation: generation
                 )
-                if authenticated { retryCount = 0 }
+                // A session that worked earns the whole retry budget back, otherwise an app
+                // left running for days eventually exhausts it on unrelated blips.
+                if authenticated {
+                    retryCount = 0
+                    totalRetryCount = 0
+                    slowRetryReason = nil
+                }
             } catch is CancellationError {
                 return
             } catch let error as OpenLiveAPIError {
                 if case .business(let code, _) = error, code == 7007 {
+                    // The identity code itself is wrong. Retrying only files more invalid
+                    // attempts against it upstream, so this one really is terminal.
                     connectionState = .failed(error.localizedDescription)
                     publishStatus("Identity code rejected")
                     return
                 }
                 if case .business(let code, _) = error, code == 7010 {
+                    // Usually our own previous session that the server has not released yet.
+                    // It expires on its own, so wait it out instead of giving up.
+                    slowRetryReason = ("开放平台连接数已达上限", "Connection limit reached")
+                } else {
                     connectionState = .failed(error.localizedDescription)
-                    publishStatus("Connection limit reached")
-                    return
                 }
-                connectionState = .failed(error.localizedDescription)
             } catch {
                 if Task.isCancelled { return }
             }
@@ -172,14 +191,20 @@ final class OpenLiveRuntime: ObservableObject {
             cancelSocketTasks(keepGameHeartbeat: true)
             retryCount += 1
             totalRetryCount += 1
-            if totalRetryCount > 30 {
-                connectionState = .failed("连接连续失败次数过多，请检查网络后重新保存身份码")
-                publishStatus("Too many reconnection attempts")
-                return
+            if slowRetryReason == nil, totalRetryCount > Self.fastRetryBudget {
+                slowRetryReason = ("连接反复失败，请检查网络", "Too many reconnection attempts")
             }
-            connectionState = .reconnecting(attempt: totalRetryCount)
-            publishStatus("Disconnected")
-            let delay = min(1 + ((totalRetryCount - 1) * 2), 20)
+
+            let delay: Int
+            if let reason = slowRetryReason {
+                connectionState = .waiting(reason: reason.label)
+                publishStatus(reason.status)
+                delay = Self.slowRetryDelay
+            } else {
+                connectionState = .reconnecting(attempt: totalRetryCount)
+                publishStatus("Disconnected")
+                delay = min(1 + ((totalRetryCount - 1) * 2), 20)
+            }
             do {
                 try await Task.sleep(for: .seconds(delay))
             } catch {

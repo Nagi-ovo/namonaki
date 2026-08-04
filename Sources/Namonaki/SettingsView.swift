@@ -321,7 +321,7 @@ private final class ConnectionSettingsController: ScrollingSettingsController, N
         switch runtime.connectionState {
         case .connected:
             statusDot.color = .systemGreen
-        case .failed:
+        case .failed, .waiting:
             statusDot.color = .systemRed
         case .idle:
             statusDot.color = .tertiaryLabelColor

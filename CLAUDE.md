@@ -43,6 +43,11 @@ SIGTERM，默认动作当场杀进程，`end_game` 没机会发出去，B 站那
 `NSApp.terminate`，走正常清理；清理有 5 秒上限，免得卡住注销。代价是退出不再是瞬间的，
 所以重启命令要 `sleep 2`。再发一次信号可以强制立即退出。
 
+**除了 7007，任何连接失败都不能永久放弃。** 7007 是身份码本身错，重试只会在公共服务端
+反复记无效尝试，所以只有它 return。7010 和「快速重试超过 30 次」都退到每 60 秒重试
+（`ConnectionState.waiting`），网络回来能自己接上。重试计数在鉴权成功后清零，
+否则挂几天的 app 会被无关抖动一点点耗光额度然后静默死掉。
+
 **收弹幕的网络边界是硬编码 allowlist。** 身份码只能 POST 到
 `https://api1.blive.chat` / `api2.blive.chat` 的 start / heartbeat / end 三个路径；
 WSS 只允许 `wss://broadcastlv.chat.bilibili.com:443/sub`。不要放宽为任意 URL。
