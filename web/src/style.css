@@ -138,9 +138,12 @@ body {
 
 /* ---------- Super chats and new guards ---------- */
 
+/* More room above and below than ordinary chatter, but the same horizontal inset — the
+   avatars have to stay in one column down the whole feed. The 3px rule is paid for out
+   of the left padding so the content lines up with every other row. */
 .row--highlight {
-  margin: 8px 14px;
-  padding: 10px 12px;
+  margin: 8px 8px;
+  padding: 10px 12px 10px 9px;
   border-left: 3px solid var(--nmk-accent);
   background: rgba(12, 12, 14, calc(var(--nmk-backdrop-alpha) + 0.14));
 }

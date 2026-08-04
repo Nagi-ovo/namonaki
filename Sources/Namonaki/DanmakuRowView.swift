@@ -83,6 +83,12 @@ final class DanmakuMessageRow: DanmakuRow {
         }
     }
 
+    /// Events get more room above and below than ordinary chatter. Only vertical — the
+    /// avatars have to stay in one column down the whole feed.
+    private var verticalMargin: CGFloat {
+        style.verticalMargin + (isHighlighted ? 5 : 0)
+    }
+
     init(message: DanmakuMessage, style: DanmakuStyle) {
         self.message = message
         super.init(style: style)
@@ -269,8 +275,9 @@ final class DanmakuMessageRow: DanmakuRow {
 
     private func computeLayout(forWidth width: CGFloat) -> Layout {
         let avatarSlot = style.showsAvatar ? style.avatarSize + style.avatarSpacing : 0
+        // Identical for every row: the gold rule is 3pt wide and the content already
+        // starts 12pt inside the backdrop, so there is nothing to make room for.
         let originX = style.horizontalMargin + style.horizontalPadding
-            + (isHighlighted ? Self.highlightBarWidth + 6 : 0)
         let contentX = originX + avatarSlot
         let contentWidth = max(
             width - contentX - style.horizontalMargin - style.horizontalPadding,
@@ -318,10 +325,10 @@ final class DanmakuMessageRow: DanmakuRow {
         }
 
         let innerHeight = max(contentHeight, style.showsAvatar ? style.avatarSize : 0)
-        let height = innerHeight + (style.verticalPadding + style.verticalMargin) * 2
+        let height = innerHeight + (style.verticalPadding + verticalMargin) * 2
 
         return Layout(
-            contentOrigin: NSPoint(x: originX, y: style.verticalMargin + style.verticalPadding),
+            contentOrigin: NSPoint(x: originX, y: verticalMargin + style.verticalPadding),
             contentWidth: contentWidth,
             labelSize: labelSize,
             labelOrigin: labelOrigin,
@@ -338,7 +345,7 @@ final class DanmakuMessageRow: DanmakuRow {
         super.layout()
         let plan = computeLayout(forWidth: bounds.width)
         let top = plan.contentOrigin.y
-        let innerHeight = bounds.height - (style.verticalPadding + style.verticalMargin) * 2
+        let innerHeight = bounds.height - (style.verticalPadding + verticalMargin) * 2
 
         if style.showsAvatar {
             avatarView.isHidden = false
@@ -376,9 +383,9 @@ final class DanmakuMessageRow: DanmakuRow {
     override func draw(_ dirtyRect: NSRect) {
         let inset = NSRect(
             x: style.horizontalMargin,
-            y: style.verticalMargin,
+            y: verticalMargin,
             width: max(bounds.width - style.horizontalMargin * 2, 0),
-            height: max(bounds.height - style.verticalMargin * 2, 0)
+            height: max(bounds.height - verticalMargin * 2, 0)
         )
         guard inset.width > 0, inset.height > 0 else { return }
 
