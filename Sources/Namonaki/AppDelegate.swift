@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 import Combine
 
 @MainActor
@@ -75,6 +74,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         appMenu.addItem(settings)
+        let composer = NSMenuItem(title: "发弹幕…", action: #selector(showComposer), keyEquivalent: "d")
+        composer.keyEquivalentModifierMask = [.command, .option]
+        composer.target = self
+        appMenu.addItem(composer)
         appMenu.addItem(.separator())
         let quitItem = NSMenuItem(title: "退出弹幕窗", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -290,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let controller = NSHostingController(rootView: ComposerView())
+        let controller = ComposerViewController()
         let window = NSWindow(contentViewController: controller)
         window.title = "发弹幕"
         window.styleMask = [.titled, .closable, .fullSizeContentView]
@@ -324,11 +327,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let controller = NSHostingController(rootView: SettingsView())
+        let controller = SettingsViewController()
         let window = NSWindow(contentViewController: controller)
         window.title = "弹幕窗设置"
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.isReleasedWhenClosed = false
+        let fixedContentSize = NSSize(width: 500, height: 500)
+        window.setContentSize(fixedContentSize)
+        window.contentMinSize = fixedContentSize
+        window.contentMaxSize = fixedContentSize
         // 空白处也能拖，不用非得抓标题栏
         window.isMovableByWindowBackground = true
         window.center()

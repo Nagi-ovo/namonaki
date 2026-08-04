@@ -8,7 +8,7 @@ final class ComposerModel: ObservableObject {
     static let shared = ComposerModel()
 
     @Published var text = ""
-    /// 每次要求聚焦就 +1，SwiftUI 那边靠它触发
+    /// 每次要求聚焦就 +1，复用中的 AppKit 输入窗靠它重新拿焦点。
     @Published var focusToken = 0
 
     private init() {}

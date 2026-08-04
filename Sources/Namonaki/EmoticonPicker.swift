@@ -1,197 +1,357 @@
-import SwiftUI
 import AppKit
+import Combine
 
-/// 带内存缓存的图片。SwiftUI 的 AsyncImage 不缓存，popover 一关一开就重新请求，
-/// 图片会闪空一下甚至加载不出来。
-struct CachedImage: View {
-    let url: String
-    @State private var image: NSImage?
-
+/// AppKit 图片加载器。内存缓存避免表情 popover 每次打开都重新请求。
+@MainActor
+private enum EmoticonImageLoader {
     private static let cache = NSCache<NSString, NSImage>()
 
-    var body: some View {
-        Group {
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(Color.secondary.opacity(0.12))
-            }
+    static func image(for rawURL: String) async -> NSImage? {
+        if let cached = cache.object(forKey: rawURL as NSString) {
+            return cached
         }
-        .task(id: url) { await load() }
-    }
-
-    private func load() async {
-        if let hit = Self.cache.object(forKey: url as NSString) {
-            image = hit
-            return
-        }
-        guard let link = URL(string: url),
-              let (data, _) = try? await URLSession.shared.data(from: link),
-              let loaded = NSImage(data: data) else { return }
-        Self.cache.setObject(loaded, forKey: url as NSString)
-        image = loaded
+        guard let url = URL(string: rawURL),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let image = NSImage(data: data) else { return nil }
+        cache.setObject(image, forKey: rawURL as NSString)
+        return image
     }
 }
 
-/// 直播间表情面板。表情是按直播间发的，换个房间列表就不一样。
-struct EmoticonPicker: View {
-    @ObservedObject private var account = BilibiliAccount.shared
-    let onPick: (BilibiliAccount.Emoticon) -> Void
+@MainActor
+private final class EmoticonButton: NSButton {
+    private let lockView = NSImageView()
+    private var loadTask: Task<Void, Never>?
+    private var item: BilibiliAccount.Emoticon?
+    var onPick: ((BilibiliAccount.Emoticon) -> Void)?
+    var onHover: ((BilibiliAccount.Emoticon?) -> Void)?
 
-    private let columns = [GridItem(.adaptive(minimum: 72), spacing: 8)]
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        target = self
+        action = #selector(pick)
+        isBordered = false
+        imagePosition = .imageOnly
+        imageScaling = .scaleProportionallyUpOrDown
+        wantsLayer = true
+        layer?.cornerRadius = 7
 
-    /// 记住上次用的系列，下次开面板直接落在那儿
-    @AppStorage("lastEmotePackID") private var selectedPack = ""
-    @State private var hovered: BilibiliAccount.Emoticon?
+        lockView.image = NSImage(
+            systemSymbolName: "lock.fill",
+            accessibilityDescription: "未解锁"
+        )
+        lockView.contentTintColor = .secondaryLabelColor
+        lockView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(lockView)
+        NSLayoutConstraint.activate([
+            lockView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            lockView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+            lockView.widthAnchor.constraint(equalToConstant: 11),
+            lockView.heightAnchor.constraint(equalToConstant: 11),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        loadTask?.cancel()
+    }
+
+    func configure(with item: BilibiliAccount.Emoticon) {
+        self.item = item
+        toolTip = item.locked ? "\(item.descript)（未解锁）" : item.descript
+        isEnabled = !item.locked
+        alphaValue = item.locked ? 0.3 : 1
+        lockView.isHidden = !item.locked
+        image = NSImage(
+            systemSymbolName: "face.smiling",
+            accessibilityDescription: item.descript
+        )
+
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in
+            guard let loaded = await EmoticonImageLoader.image(for: item.url),
+                  !Task.isCancelled,
+                  self?.item?.id == item.id else { return }
+            self?.image = loaded
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited],
+            owner: self
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor
+        if let item { onHover?(item) }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.clear.cgColor
+        onHover?(nil)
+    }
+
+    @objc private func pick() {
+        guard let item, !item.locked else { return }
+        onPick?(item)
+    }
+}
+
+/// 直播间表情面板。表情按直播间发放，换房间后列表也会变。
+@MainActor
+final class EmoticonPickerViewController: NSViewController {
+    private let account = BilibiliAccount.shared
+    private let onPick: (BilibiliAccount.Emoticon) -> Void
+    private var cancellables = Set<AnyCancellable>()
+    private var footerLabel: NSTextField?
+
+    private var selectedPackID: String {
+        get { UserDefaults.standard.string(forKey: "lastEmotePackID") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "lastEmotePackID") }
+    }
 
     private var currentPack: BilibiliAccount.EmotePack? {
-        account.visiblePacks.first { $0.id == selectedPack } ?? account.visiblePacks.first
+        account.visiblePacks.first { $0.id == selectedPackID } ?? account.visiblePacks.first
     }
 
-    var body: some View {
+    init(onPick: @escaping (BilibiliAccount.Emoticon) -> Void) {
+        self.onPick = onPick
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 430))
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        account.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.reload() }
+            }
+            .store(in: &cancellables)
+        reload()
+    }
+
+    private func reload() {
+        view.subviews.forEach { $0.removeFromSuperview() }
+        footerLabel = nil
+
         if account.visiblePacks.isEmpty {
-            legacyBody
+            installLegacyBody()
         } else {
-            VStack(spacing: 0) {
-                packTabs
-                Divider()
-                grid
-                Divider()
-                footer
-            }
-            // 必须钉死尺寸：popover 的大小由内容决定，不给约束的话
-            // 网格会一路把它撑开，反而滚不动
-            .frame(width: 420, height: 430)
+            installPackBody()
         }
     }
 
-    /// 用下拉而不是横向标签条：十几个系列排成一条根本拖不动
-    private var packTabs: some View {
-        HStack(spacing: 8) {
-            Menu {
-                ForEach(account.visiblePacks) { pack in
-                    Button {
-                        selectedPack = pack.id
-                    } label: {
-                        Text(pack.liveRenderable ? pack.name : "\(pack.name)（只出文字）")
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(currentPack?.name ?? "选择表情系列")
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9))
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-
-            if let pack = currentPack, !pack.liveRenderable {
-                Text("直播不出图")
-                    .font(.system(size: 9))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.orange.opacity(0.2)))
-                    .foregroundStyle(.orange)
-            }
-
-            Spacer()
+    private func installPackBody() {
+        preferredContentSize = NSSize(width: 420, height: 430)
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for pack in account.visiblePacks {
+            let title = pack.liveRenderable ? pack.name : "\(pack.name)（只出文字）"
+            popup.addItem(withTitle: title)
+            popup.lastItem?.representedObject = pack.id
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        let selected = currentPack ?? account.visiblePacks[0]
+        selectedPackID = selected.id
+        if let index = popup.itemArray.firstIndex(where: { ($0.representedObject as? String) == selected.id }) {
+            popup.selectItem(at: index)
+        }
+        popup.target = self
+        popup.action = #selector(selectPack(_:))
+        popup.controlSize = .small
+
+        let badge = AppKitUI.label(
+            "直播不出图",
+            size: 9,
+            weight: .medium,
+            color: .systemOrange
+        )
+        badge.isHidden = selected.liveRenderable
+        let header = AppKitUI.stack(
+            [popup, badge, flexibleSpacer()],
+            orientation: .horizontal,
+            spacing: 8,
+            alignment: .centerY
+        )
+        let headerHost = insetHost(header, top: 7, left: 12, bottom: 7, right: 12)
+
+        let scroll = gridScrollView(items: selected.items, columns: 5)
+        let footer = AppKitUI.label(
+            "\(selected.name) · \(selected.items.count) 个",
+            size: 10,
+            color: .secondaryLabelColor
+        )
+        footerLabel = footer
+        let footerHost = insetHost(footer, top: 6, left: 12, bottom: 6, right: 12)
+
+        let outer = AppKitUI.stack(
+            [headerHost, AppKitUI.separator(), scroll, AppKitUI.separator(), footerHost],
+            spacing: 0,
+            alignment: .width
+        )
+        installEdges(outer)
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
     }
 
-    private var grid: some View {
-        ScrollView(.vertical) {
-            LazyVGrid(columns: columns, spacing: 6) {
-                ForEach(currentPack?.items ?? []) { emoticon in
-                    Button {
-                        guard !emoticon.locked else { return }
-                        onPick(emoticon)
-                    } label: {
-                        cell(emoticon)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        hovered = hovering ? emoticon : (hovered == emoticon ? nil : hovered)
-                    }
-                }
-            }
-            .padding(10)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var footer: some View {
-        HStack {
-            Text(hovered?.descript ?? currentPack.map { "\($0.name) · \($0.items.count) 个" } ?? "")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-    }
-
-    private var legacyBody: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if account.emoticons.isEmpty {
-                VStack(spacing: 6) {
-                    Text("没有可用表情")
-                        .font(.system(size: 12, weight: .medium))
-                    Text("表情按直播间发放，可能是还没加载完，或者这个直播间没开表情。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    Button("重新加载") {
-                        Task { await account.refreshEmoticons() }
-                    }
-                    .controlSize(.small)
-                }
-                .frame(width: 260)
-                .padding(20)
-            } else {
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(account.emoticons) { emoticon in
-                            Button {
-                                guard !emoticon.locked else { return }
-                                onPick(emoticon)
-                            } label: {
-                                cell(emoticon)
-                            }
-                            .buttonStyle(.plain)
-                            .help(emoticon.locked ? "\(emoticon.descript)（未解锁）" : emoticon.descript)
-                        }
-                    }
-                    .padding(10)
-                }
-                .frame(width: 320, height: 260)
-            }
-        }
-    }
-
-    private func cell(_ emoticon: BilibiliAccount.Emoticon) -> some View {
-        CachedImage(url: emoticon.url)
-            .frame(width: 64, height: 64)
-            .padding(4)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(hovered == emoticon ? Color.accentColor.opacity(0.16) : Color.clear)
+    private func installLegacyBody() {
+        if account.emoticons.isEmpty {
+            preferredContentSize = NSSize(width: 300, height: 150)
+            let title = AppKitUI.label("没有可用表情", size: 12, weight: .medium)
+            let detail = AppKitUI.label(
+                "表情按直播间发放，可能是还没加载完，或者这个直播间没开表情。",
+                size: 11,
+                color: .secondaryLabelColor,
+                wrapping: true
             )
-        .opacity(emoticon.locked ? 0.3 : 1)
-        .overlay(alignment: .bottomTrailing) {
-            if emoticon.locked {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+            detail.alignment = .center
+            let reload = NSButton(title: "重新加载", target: self, action: #selector(refresh))
+            reload.controlSize = .small
+            let body = AppKitUI.stack(
+                [title, detail, reload],
+                spacing: 7,
+                alignment: .centerX
+            )
+            installCentered(body, horizontalInset: 20)
+        } else {
+            preferredContentSize = NSSize(width: 320, height: 260)
+            installEdges(gridScrollView(items: account.emoticons, columns: 4))
+        }
+    }
+
+    private func gridScrollView(
+        items: [BilibiliAccount.Emoticon],
+        columns: Int
+    ) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+
+        let document = FlippedView()
+        let grid = AppKitUI.stack([], spacing: 6, alignment: .leading)
+        var rowViews: [NSView] = []
+
+        for item in items {
+            let button = EmoticonButton(frame: .zero)
+            button.configure(with: item)
+            button.onPick = { [weak self] in self?.onPick($0) }
+            button.onHover = { [weak self] hovered in self?.updateFooter(hovered) }
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 72),
+                button.heightAnchor.constraint(equalToConstant: 72),
+            ])
+            rowViews.append(button)
+
+            if rowViews.count == columns {
+                grid.addArrangedSubview(gridRow(rowViews))
+                rowViews = []
             }
         }
+        if !rowViews.isEmpty {
+            grid.addArrangedSubview(gridRow(rowViews))
+        }
+
+        document.addSubview(grid)
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: document.topAnchor, constant: 10),
+            grid.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 10),
+            grid.trailingAnchor.constraint(lessThanOrEqualTo: document.trailingAnchor, constant: -10),
+            grid.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -10),
+        ])
+        scroll.documentView = document
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
+        return scroll
+    }
+
+    private func gridRow(_ views: [NSView]) -> NSStackView {
+        let row = AppKitUI.stack(
+            views + [flexibleSpacer()],
+            orientation: .horizontal,
+            spacing: 8,
+            alignment: .centerY
+        )
+        return row
+    }
+
+    private func updateFooter(_ hovered: BilibiliAccount.Emoticon?) {
+        if let hovered {
+            footerLabel?.stringValue = hovered.descript
+        } else if let pack = currentPack {
+            footerLabel?.stringValue = "\(pack.name) · \(pack.items.count) 个"
+        }
+    }
+
+    @objc private func selectPack(_ sender: NSPopUpButton) {
+        guard let id = sender.selectedItem?.representedObject as? String else { return }
+        selectedPackID = id
+        reload()
+    }
+
+    @objc private func refresh() {
+        Task { await account.refreshEmoticons() }
+    }
+
+    private func flexibleSpacer() -> NSView {
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return spacer
+    }
+
+    private func insetHost(
+        _ content: NSView,
+        top: CGFloat,
+        left: CGFloat,
+        bottom: CGFloat,
+        right: CGFloat
+    ) -> NSView {
+        let host = NSView()
+        host.addSubview(content)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: host.topAnchor, constant: top),
+            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: left),
+            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -right),
+            content.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -bottom),
+        ])
+        return host
+    }
+
+    private func installEdges(_ content: NSView) {
+        view.addSubview(content)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: view.topAnchor),
+            content.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+    }
+
+    private func installCentered(_ content: NSView, horizontalInset: CGFloat) {
+        view.addSubview(content)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            content.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            content.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: horizontalInset),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -horizontalInset),
+        ])
     }
 }
