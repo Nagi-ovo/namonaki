@@ -15,7 +15,6 @@ final class ComposerViewController: NSViewController, NSTextFieldDelegate {
     private let model = ComposerModel.shared
     private let input = NSTextField()
     private let faceButton = NSButton()
-    private let sendButton = NSButton()
     private let progress = NSProgressIndicator()
     private let statusIcon = NSImageView()
     private let statusLabel = AppKitUI.label(
@@ -24,9 +23,11 @@ final class ComposerViewController: NSViewController, NSTextFieldDelegate {
         color: .secondaryLabelColor,
         wrapping: true
     )
-    private let countLabel = AppKitUI.label(
+    /// Sits inside the input well. Normally it just says the return key sends; it turns
+    /// into a countdown once there is little room left.
+    private let trailingLabel = AppKitUI.label(
         "",
-        size: 10,
+        size: 12,
         color: .tertiaryLabelColor,
         monospaced: true
     )
@@ -38,10 +39,10 @@ final class ComposerViewController: NSViewController, NSTextFieldDelegate {
     private var isUpdatingInput = false
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 104))
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 82))
         preferredContentSize = view.frame.size
 
-        input.placeholderString = "说点什么…"
+        input.placeholderString = "弹幕内容"
         input.font = .systemFont(ofSize: 15)
         input.isBezeled = false
         input.drawsBackground = false
@@ -50,65 +51,58 @@ final class ComposerViewController: NSViewController, NSTextFieldDelegate {
         input.target = self
         input.action = #selector(submit)
 
-        let inputBackground = NSView()
-        inputBackground.wantsLayer = true
-        inputBackground.layer?.cornerRadius = 8
-        inputBackground.layer?.backgroundColor = NSColor.secondaryLabelColor
-            .withAlphaComponent(0.10).cgColor
-        inputBackground.addSubview(input)
-        input.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            input.leadingAnchor.constraint(equalTo: inputBackground.leadingAnchor, constant: 12),
-            input.trailingAnchor.constraint(equalTo: inputBackground.trailingAnchor, constant: -12),
-            input.centerYAnchor.constraint(equalTo: inputBackground.centerYAnchor),
-            inputBackground.heightAnchor.constraint(equalToConstant: 36),
-        ])
-
+        // There is no send button: the return key sends, and a button next to the field
+        // that does the same thing is the single loudest bit of chat-app costume.
         faceButton.image = NSImage(
             systemSymbolName: "face.smiling",
             accessibilityDescription: "选择表情"
         )
         faceButton.toolTip = "选择表情"
-        faceButton.bezelStyle = .rounded
+        faceButton.isBordered = false
+        faceButton.bezelStyle = .accessoryBar
+        faceButton.contentTintColor = .secondaryLabelColor
         faceButton.target = self
         faceButton.action = #selector(showEmoticons)
-
-        sendButton.image = NSImage(
-            systemSymbolName: "paperplane.fill",
-            accessibilityDescription: "发送"
-        )
-        sendButton.toolTip = "发送"
-        sendButton.bezelStyle = .rounded
-        sendButton.bezelColor = .controlAccentColor
-        sendButton.contentTintColor = .white
-        sendButton.target = self
-        sendButton.action = #selector(submit)
-
-        for button in [faceButton, sendButton] {
-            button.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(equalToConstant: 34),
-                button.heightAnchor.constraint(equalToConstant: 32),
-            ])
-        }
 
         progress.style = .spinning
         progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
-        progress.translatesAutoresizingMaskIntoConstraints = false
-        sendButton.addSubview(progress)
-        NSLayoutConstraint.activate([
-            progress.centerXAnchor.constraint(equalTo: sendButton.centerXAnchor),
-            progress.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
-        ])
 
-        let inputRow = AppKitUI.stack(
-            [inputBackground, faceButton, sendButton],
-            orientation: .horizontal,
-            spacing: 8,
-            alignment: .centerY
-        )
-        inputBackground.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let inputRow = NSView()
+        inputRow.wantsLayer = true
+        inputRow.layer?.cornerRadius = 8
+        inputRow.layer?.backgroundColor = NSColor.secondaryLabelColor
+            .withAlphaComponent(0.10).cgColor
+
+        for subview in [input, faceButton, trailingLabel, progress] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            inputRow.addSubview(subview)
+        }
+        trailingLabel.alignment = .right
+        NSLayoutConstraint.activate([
+            inputRow.heightAnchor.constraint(equalToConstant: 36),
+
+            input.leadingAnchor.constraint(equalTo: inputRow.leadingAnchor, constant: 12),
+            input.centerYAnchor.constraint(equalTo: inputRow.centerYAnchor),
+            input.trailingAnchor.constraint(equalTo: faceButton.leadingAnchor, constant: -8),
+
+            faceButton.centerYAnchor.constraint(equalTo: inputRow.centerYAnchor),
+            faceButton.widthAnchor.constraint(equalToConstant: 20),
+            // Enough of a gap that the glyph and the countdown read as two things.
+            faceButton.trailingAnchor.constraint(
+                equalTo: trailingLabel.leadingAnchor, constant: -12
+            ),
+
+            trailingLabel.centerYAnchor.constraint(equalTo: inputRow.centerYAnchor),
+            // Fixed so the field does not twitch as the number changes width.
+            trailingLabel.widthAnchor.constraint(equalToConstant: 18),
+            trailingLabel.trailingAnchor.constraint(
+                equalTo: inputRow.trailingAnchor, constant: -12
+            ),
+
+            progress.centerXAnchor.constraint(equalTo: trailingLabel.centerXAnchor),
+            progress.centerYAnchor.constraint(equalTo: inputRow.centerYAnchor),
+        ])
 
         statusIcon.imageScaling = .scaleProportionallyDown
         statusIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -117,11 +111,8 @@ final class ComposerViewController: NSViewController, NSTextFieldDelegate {
             statusIcon.heightAnchor.constraint(equalToConstant: 13),
         ])
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        countLabel.setContentHuggingPriority(.required, for: .horizontal)
-        let statusSpacer = NSView()
-        statusSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let statusRow = AppKitUI.stack(
-            [statusIcon, statusLabel, statusSpacer, countLabel],
+            [statusIcon, statusLabel],
             orientation: .horizontal,
             spacing: 6,
             alignment: .centerY
@@ -207,9 +198,10 @@ final class ComposerViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private var hint: String {
+        // The limit itself is not worth a permanent line — the countdown in the field
+        // covers it. Only say something when it changes what will happen.
         if let limit = account.detectedDanmakuLimit {
             if model.text.count > limit { return "发送时会自动截到实测上限 \(limit) 字" }
-            return "B 站实测上限 \(limit) 字"
         }
         if model.text.count > DanmakuLengthPolicy.advertisedLimit {
             return "会先尝试原文；B 站拒绝后按 60 / 50 / 40 / 30 / 20 字回退"
@@ -227,21 +219,23 @@ final class ComposerViewController: NSViewController, NSTextFieldDelegate {
 
     private func updateUI() {
         guard isViewLoaded else { return }
-        let trimmed = model.text.trimmingCharacters(in: .whitespaces)
         let isSending = status == .sending
         faceButton.isEnabled = account.isLoggedIn && !isSending
-        sendButton.isEnabled = !trimmed.isEmpty && !isSending
-        sendButton.image?.isTemplate = true
-        sendButton.imagePosition = isSending ? .noImage : .imageOnly
         isSending ? progress.startAnimation(nil) : progress.stopAnimation(nil)
+        trailingLabel.isHidden = isSending
 
-        countLabel.stringValue = "\(model.text.count)/\(displayLimit)"
-        let overLimit = model.text.count > displayLimit
-        countLabel.textColor = overLimit ? .systemOrange : .tertiaryLabelColor
-        countLabel.font = NSFont.monospacedSystemFont(
-            ofSize: 10,
-            weight: overLimit ? .semibold : .regular
-        )
+        // A running count of something you are nowhere near is noise. It only appears
+        // once the remaining room is small enough to change what you type.
+        let remaining = displayLimit - model.text.count
+        if remaining <= 10 {
+            trailingLabel.stringValue = "\(remaining)"
+            trailingLabel.textColor = remaining <= 3 ? .systemRed : .secondaryLabelColor
+            trailingLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        } else {
+            trailingLabel.stringValue = "⏎"
+            trailingLabel.textColor = .tertiaryLabelColor
+            trailingLabel.font = .systemFont(ofSize: 12)
+        }
 
         switch status {
         case .idle:

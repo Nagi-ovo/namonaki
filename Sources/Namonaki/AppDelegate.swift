@@ -306,7 +306,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = ComposerViewController()
         let window = NSWindow(contentViewController: controller)
         window.title = "发弹幕"
-        window.styleMask = [.titled, .closable, .fullSizeContentView]
+        // No .fullSizeContentView: nothing is drawn into the title bar, and letting the
+        // content slide under it put the input field on top of the traffic lights.
+        window.styleMask = [.titled, .closable]
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
