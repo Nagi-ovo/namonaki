@@ -41,6 +41,36 @@ struct DanmakuRenderingTests {
         #expect(long.fittingHeight(forWidth: Self.width) > shortHeight * 2)
     }
 
+    /// Both renderers have to agree on the leading. The OBS page has no copy of its own —
+    /// it takes this value over the relay — so the wrapped height is what proves it.
+    @Test func wrappedLinesUseTheSharedLineHeight() {
+        let style = DanmakuStyle()
+        let one = DanmakuMessageRow(message: Self.text("短"), style: style)
+        let three = DanmakuMessageRow(
+            message: Self.text(String(repeating: "这条弹幕要换行", count: 10)),
+            style: style
+        )
+
+        // Every extra line has to cost exactly one line height, no more and no less.
+        let extraLines = (three.fittingHeight(forWidth: Self.width)
+            - one.fittingHeight(forWidth: Self.width)) / style.lineHeight
+        #expect(extraLines >= 2)
+        #expect(abs(extraLines - extraLines.rounded()) < 0.05)
+        #expect(style.lineHeight == (style.fontSize * DanmakuStyle.lineHeightRatio).rounded())
+    }
+
+    /// A pasted link is one unbroken run. Word wrapping alone would let it overflow the
+    /// row and get clipped.
+    @Test func longUnbrokenRunsWrapInsteadOfOverflowing() {
+        let style = DanmakuStyle()
+        let link = "https://example.com/" + String(repeating: "a", count: 120)
+        let row = DanmakuMessageRow(message: Self.text(link), style: style)
+        let height = row.fittingHeight(forWidth: Self.width)
+
+        // Nothing that long fits on one line, so it has to have become several.
+        #expect(height > style.lineHeight * 3)
+    }
+
     @Test func rowIsNeverShorterThanItsAvatar() {
         var style = DanmakuStyle()
         style.fontSize = 40
@@ -134,6 +164,8 @@ struct DanmakuRenderingTests {
             .gift(DanmakuMessage.Gift(
                 id: "g", author: Self.author("土豪"), giftName: "小花花", num: 3, totalCoin: 500
             )),
+            // The awkward case is worth looking at every time, not just asserting on.
+            Self.text("https://example.com/" + String(repeating: "a", count: 90), by: "发链接的"),
         ]
 
         let rows = messages.map { DanmakuMessageRow(message: $0, style: style) }

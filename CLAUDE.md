@@ -106,9 +106,13 @@ WebView 扫码登录 → 取 Cookie 里的 `SESSDATA` / `bili_jct` → 存钥匙
 **两套，得手动对齐。** HUD 用 `DanmakuStyle.swift`（纯 Swift 常量），OBS 用
 `web/src/style.css`。两边的取值是一比一抄过来的，改了一边记得改另一边。
 
-三根滑杆（字号 / 用户名不透明度 / 衬底浓度）和预设会通过 relay 的 `style` 消息
-实时推给 OBS 页，用户不用手动同步。`LocalRelayServer` 把最后一条 `style` 存着，
+三根滑杆（字号 / 用户名不透明度 / 衬底浓度）、预设、以及行高都通过 relay 的 `style`
+消息实时推给 OBS 页，用户不用手动同步。`LocalRelayServer` 把最后一条 `style` 存着，
 后连上来的浏览器源也能拿到。
+
+**行高只有一个来源：`DanmakuStyle.lineHeightRatio`。** CSS 里那个
+`--nmk-line-height: 1.5` 只是连上 socket 之前的兜底。之前两边各写一份，
+结果 HUD 26px/行、OBS 31.5px/行，漂了 21% 没人发现——所以能推的值就别抄第二份。
 
 `DefaultStyle.swift` 现在只是**可选的额外覆盖**，一份带注释的起点，不是完整样式表。
 改它的结构才需要给 `Preferences.currentCSSVersion` +1——这个升级会覆盖用户自己写的 CSS，

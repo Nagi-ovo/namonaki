@@ -14,6 +14,9 @@
   /* Avatars track the font size; two sliders fighting each other buys nothing. */
   --nmk-avatar-size: calc(var(--nmk-font-size) * 1.3);
   --nmk-accent: rgba(235, 197, 133, 0.95);
+  /* Pushed by the app from `DanmakuStyle.lineHeightRatio`, which owns the value. This
+     default only covers the moment before the socket connects. */
+  --nmk-line-height: 1.5;
 }
 
 html,
@@ -85,7 +88,10 @@ body {
 .body {
   flex: 1 1 auto;
   min-width: 0;
-  line-height: 1.5;
+  line-height: var(--nmk-line-height);
+  /* Viewers paste links. Without this one long unbroken run runs straight out of the
+     backdrop. */
+  overflow-wrap: break-word;
   /* Readable over a bright scene, but restrained — too much blur is harder to read,
      not easier. */
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -118,7 +124,8 @@ body {
 .text {
   font-size: var(--nmk-font-size);
   color: rgba(255, 255, 255, 0.97);
-  letter-spacing: 0.01em;
+  /* Keeps a single trailing word off its own line. */
+  text-wrap: pretty;
 }
 
 /* Height only — pinning the width squashes anything that is not square. */

@@ -66,6 +66,9 @@ final class Preferences: ObservableObject {
                 "nameOpacity": nameOpacity,
                 "backdropAlpha": backdropAlpha,
                 "preset": presetID,
+                // Not a setting — sent so the page never carries its own copy of a
+                // number `DanmakuStyle` owns.
+                "lineHeight": DanmakuStyle.lineHeightRatio,
             ],
         ])) ?? Data()
     }

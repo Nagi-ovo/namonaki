@@ -24,7 +24,12 @@ struct DanmakuStyle: Equatable {
     /// Avatars track the font size; two sliders fighting each other buys nothing.
     var avatarSize: CGFloat { (fontSize * 1.3).rounded() }
     var avatarSpacing: CGFloat { 10 }
-    var lineSpacing: CGFloat { 2 }
+
+    /// Source of truth for both renderers — the OBS page receives this over the relay
+    /// rather than carrying its own copy. Danmaku regularly wrap to two or three lines,
+    /// which is exactly where a tight leading starts to hurt.
+    static let lineHeightRatio: CGFloat = 1.5
+    var lineHeight: CGFloat { (fontSize * Self.lineHeightRatio).rounded() }
     /// Full-image emotes (the dress-up ones).
     var largeEmoticonHeight: CGFloat { 60 }
     var giftIconHeight: CGFloat { (fontSize * 1.4).rounded() }

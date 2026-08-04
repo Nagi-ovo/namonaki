@@ -28,6 +28,9 @@
     if (typeof style.backdropAlpha === 'number') {
       root.style.setProperty('--nmk-backdrop-alpha', String(style.backdropAlpha))
     }
+    if (typeof style.lineHeight === 'number') {
+      root.style.setProperty('--nmk-line-height', String(style.lineHeight))
+    }
     if (typeof style.preset === 'string') {
       root.dataset.preset = style.preset
     }

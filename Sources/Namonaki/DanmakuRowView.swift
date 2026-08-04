@@ -184,8 +184,11 @@ final class DanmakuMessageRow: DanmakuRow {
 
     private func attributedContent() -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        paragraph.lineSpacing = style.lineSpacing
+        paragraph.lineBreakMode = breakMode
+        // Fixed line height rather than added leading, so it stays put across the mixed
+        // name/message sizes on one line — the same thing CSS `line-height` does.
+        paragraph.minimumLineHeight = style.lineHeight
+        paragraph.maximumLineHeight = style.lineHeight
 
         let result = NSMutableAttributedString()
         let shadow = style.textShadow
@@ -260,6 +263,32 @@ final class DanmakuMessageRow: DanmakuRow {
         }
     }
 
+    // MARK: Wrapping
+
+    private var breakMode: NSLineBreakMode = .byWordWrapping
+
+    /// AppKit has no `overflow-wrap: break-word`. Word wrapping alone lets an unbroken
+    /// run — a pasted link, a wall of latin characters — run past the row and get
+    /// clipped. Character wrapping never overflows but splits ordinary words mid-way, so
+    /// it is switched on only for the messages that actually need it.
+    private func updateBreakMode(forContentWidth width: CGFloat) {
+        let text = label.attributedStringValue
+        guard text.length > 0 else { return }
+
+        // CJK has no spaces, so a long Chinese message counts as one run and ends up
+        // character-wrapped — which is exactly how browsers break it anyway.
+        let longest = text.string
+            .components(separatedBy: .whitespacesAndNewlines)
+            .max(by: { $0.count < $1.count }) ?? ""
+        let attributes = text.attributes(at: text.length - 1, effectiveRange: nil)
+        let overflows = (longest as NSString).size(withAttributes: attributes).width > width
+
+        let wanted: NSLineBreakMode = overflows ? .byCharWrapping : .byWordWrapping
+        guard wanted != breakMode else { return }
+        breakMode = wanted
+        applyText()
+    }
+
     // MARK: Measuring and layout
 
     /// Where the avatar, the text and the trailing image end up. Measuring and laying out
@@ -284,6 +313,7 @@ final class DanmakuMessageRow: DanmakuRow {
             40
         )
 
+        updateBreakMode(forContentWidth: contentWidth)
         label.preferredMaxLayoutWidth = contentWidth
         var labelSize = label.fittingSize
         labelSize.width = min(labelSize.width, contentWidth)
