@@ -28,6 +28,31 @@ struct DanmakuRenderingTests {
 
     private static let width: CGFloat = 380
 
+    /// Stands in for `HUDWindow`, sharing the one thing under test: which field editor
+    /// a danmaku label is handed.
+    @MainActor
+    final class FieldEditorWindow: NSWindow {
+        private let provider = TransparentFieldEditorProvider()
+        private(set) var handedOutEditor: TransparentFieldEditor?
+
+        override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? {
+            if let editor = provider.fieldEditor(for: object) as? TransparentFieldEditor {
+                handedOutEditor = editor
+                return editor
+            }
+            return super.fieldEditor(createFlag, for: object)
+        }
+    }
+
+    private static func findLabel(in view: NSView) -> DanmakuLabel? {
+        if let label = view as? DanmakuLabel { return label }
+        for subview in view.subviews {
+            if let found = findLabel(in: subview) { return found }
+        }
+        return nil
+    }
+
+
     @Test func wrappedMessagesGetTallerRows() {
         let style = DanmakuStyle()
         let short = DanmakuMessageRow(message: Self.text("好"), style: style)
@@ -69,6 +94,42 @@ struct DanmakuRenderingTests {
 
         // Nothing that long fits on one line, so it has to have become several.
         #expect(height > style.lineHeight * 3)
+    }
+
+    /// Clicking a row used to swap in the window's field editor, which painted an opaque
+    /// background over the translucent backdrop and re-rendered the text without its
+    /// colours or shadow — and stuck that way, because an overlay window rarely gives up
+    /// first responder.
+    @Test func selectingTextLeavesTheRowLookingTheSame() throws {
+        let style = DanmakuStyle()
+        let row = DanmakuMessageRow(message: Self.text("能不能复制这条", by: "观众"), style: style)
+        row.frame = NSRect(
+            x: 0, y: 0,
+            width: Self.width,
+            height: row.fittingHeight(forWidth: Self.width)
+        )
+
+        let window = FieldEditorWindow(
+            contentRect: row.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let content = NSView(frame: row.frame)
+        window.contentView = content
+        content.addSubview(row)
+        content.layoutSubtreeIfNeeded()
+
+        let label = try #require(Self.findLabel(in: row))
+        #expect(window.makeFirstResponder(label))
+
+        // The editor is a live AppKit object that will not render in an off-screen
+        // window, so this asserts the invariant rather than the pixels: whatever the
+        // cell asks for, this editor never paints a background.
+        let editor = try #require(window.handedOutEditor)
+        #expect(!editor.drawsBackground)
+        editor.drawsBackground = true
+        #expect(!editor.drawsBackground)
     }
 
     @Test func rowIsNeverShorterThanItsAvatar() {

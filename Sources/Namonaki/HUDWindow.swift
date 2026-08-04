@@ -352,6 +352,14 @@ final class HUDWindow: NSWindow {
     }
 
     override var canBecomeKey: Bool { true }
+
+    // MARK: - Text selection
+
+    private let fieldEditors = TransparentFieldEditorProvider()
+
+    override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? {
+        fieldEditors.fieldEditor(for: object) ?? super.fieldEditor(createFlag, for: object)
+    }
 }
 
 /// Transparent drag layer: the window moves from anywhere in it, and the scroll wheel is

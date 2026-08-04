@@ -52,6 +52,35 @@ final class DanmakuLabel: NSTextField {
     }
 }
 
+/// Clicking a selectable NSTextField swaps in the window's field editor — a shared
+/// NSTextView laid over that one row — and the stock one paints an opaque background,
+/// which wipes out the row's translucent backdrop and its text shadow until something
+/// else takes first responder. On an overlay that rarely gives up focus, that is
+/// permanent.
+@MainActor
+final class TransparentFieldEditor: NSTextView {
+    override var drawsBackground: Bool {
+        get { false }
+        set { _ = newValue }
+    }
+}
+
+/// Hands out one shared editor, the way a window normally would.
+@MainActor
+final class TransparentFieldEditorProvider {
+    private lazy var editor: TransparentFieldEditor = {
+        let editor = TransparentFieldEditor()
+        editor.isFieldEditor = true
+        editor.backgroundColor = .clear
+        return editor
+    }()
+
+    /// Only danmaku labels get it; anything else in the window keeps the stock editor.
+    func fieldEditor(for object: Any?) -> NSText? {
+        object is DanmakuLabel ? editor : nil
+    }
+}
+
 // MARK: - A message
 
 @MainActor
@@ -97,7 +126,10 @@ final class DanmakuMessageRow: DanmakuRow {
         label.isEditable = false
         label.isBordered = false
         label.drawsBackground = false
-        label.allowsEditingTextAttributes = false
+        // The field editor drops down to plain text unless rich text is allowed, and
+        // then redraws the row in the cell's default font and colour instead of the
+        // attributed string we built.
+        label.allowsEditingTextAttributes = true
         label.maximumNumberOfLines = 0
         label.lineBreakMode = .byWordWrapping
         label.cell?.wraps = true
