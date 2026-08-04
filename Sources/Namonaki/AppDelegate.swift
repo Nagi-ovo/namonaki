@@ -23,6 +23,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] code in self?.runtime.updateAuthCode(code) }
             .store(in: &cancellables)
 
+        // Keep the OBS page on the same look as the HUD. The relay latches the last value,
+        // so a browser source that connects later still gets it.
+        Publishers.CombineLatest4(
+            prefs.$fontSize, prefs.$nameOpacity, prefs.$backdropAlpha, prefs.$presetID
+        )
+        .debounce(for: .milliseconds(120), scheduler: RunLoop.main)
+        .sink { [weak self] _, _, _, _ in
+            guard let self else { return }
+            self.runtime.publishStyle(self.prefs.obsStylePayload)
+        }
+        .store(in: &cancellables)
+
         let window = HUDWindow()
         window.alphaValue = prefs.opacity
         window.level = prefs.alwaysOnTop ? HUDWindow.overlayLevel : .normal

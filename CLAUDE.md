@@ -1,11 +1,12 @@
 # Namonaki
 
 macOS 菜单栏 app，在桌面上悬浮一个 B 站直播弹幕窗。窗口和弹幕列表全是 AppKit 手画的，
-样式在 `DanmakuStyle.swift`。内置的 blivechat 渲染页只服务 OBS 浏览器源。
+样式在 `DanmakuStyle.swift`。OBS 浏览器源用 `web/` 里那个自写的 Svelte 页，
+已经不依赖 blivechat 前端。
 
 数据流：`OpenLiveRuntime` 直连 B 站拿到消息 → `OpenLiveEventMapper` 映射成
 `DanmakuMessage` → HUD 订阅 `runtime.messages` 原生渲染，同时 `relayPayload`
-转成 blivechat 认识的 JSON 发给 `LocalRelayServer` 供 OBS 用。一条上游连接，两个出口。
+转成 JSON 发给 `LocalRelayServer` 供 OBS 用。一条上游连接，两个出口。
 
 注释和 commit message 一律用英文。
 
@@ -17,17 +18,17 @@ pkill -x Namonaki; open build/Namonaki.app    # 双击不会重启已在运行�
 ```
 
 不再依赖 Python / uv 进程。App 自己在 `127.0.0.1:12451` 提供渲染页和 WebSocket relay，
-**这条只给 OBS 用**，HUD 不经过它。`Resources/Renderer` 是随 app 打包的 blivechat 前端产物。
+**这条只给 OBS 用**，HUD 不经过它。
 
-只在修改 `../blivechat/frontend` 时用 **bun** 重建，不要用 npm：
+`Resources/Renderer` 是 `web/` 的构建产物，**已提交进仓库**，所以普通编译不需要前端工具。
+改了 `web/` 才要用 **bun** 重建（不要用 npm）：
 
 ```
-cd ../blivechat/frontend
-PROD_SOURCE_MAP=false bun run build
-rsync -a --delete dist/ ../../namonaki/Resources/Renderer/
+cd web && bun install && bun run build     # 直接写进 ../Resources/Renderer
 ```
 
-被拦的两个 postinstall 都是 core-js 的赞助广告，忽略即可。
+想在浏览器里看效果又不想开直播：起一个本地服务喂假消息即可，页面只认
+`ws://<host>/events?token=…` 和 `?token=` 查询参数，跟 12451 端口没绑死。
 
 ## 踩过的坑
 
@@ -58,11 +59,9 @@ Info.plist 里 `NSPrefersDisplaySafeAreaCompatibilityMode = false`（关掉刘�
 `//i0.hdslb.com/…` 或 `http://…`；`OpenLiveEventMapper.secureURL` 负责升级。不要重新打开
 `NSAllowsArbitraryLoadsInWebContent`，内置页 CSP 也只放行 B 站图片域名。
 
-**blivechat 页面上有两个 `id="items"`**——`Ticker.vue`（顶部付费滚动条）一个，
-`ChatRenderer/index.vue`（真正的弹幕容器）一个，而 Ticker 在 DOM 顺序上排在前面。
-所以 `document.querySelector('#items')` 拿到的一直是 Ticker 那个，选弹幕容器
-**必须写成 `#item-offset #items`**。这个坑一次报废了三轮修复。现在 HUD 已经不碰
-DOM 了，只有 OBS 那份 CSS 还受影响。
+**relay 的静态文件服务把「路径里没有点」当成 index.html**（SPA fallback），
+OBS 用的地址是 `/room/native`，所以 Vite 的 `base` 必须是 `/`，用 `./` 会让资源
+去找 `/room/assets/…` 而 404。
 
 **滚动视图同样会吃掉鼠标事件**，窗口就拖不动。靠一层透明的 `DragOverlay` 接管拖动，
 滚轮再转发给列表。它的 `hitTest` 只在编辑模式返回自己。
@@ -105,13 +104,15 @@ WebView 扫码登录 → 取 Cookie 里的 `SESSDATA` / `bili_jct` → 存钥匙
 ## 样式
 
 **两套，得手动对齐。** HUD 用 `DanmakuStyle.swift`（纯 Swift 常量），OBS 用
-`DefaultStyle.swift` 里那份 CSS。两边的取值是一比一抄过来的，改了一边记得改另一边。
+`web/src/style.css`。两边的取值是一比一抄过来的，改了一边记得改另一边。
 
-设置面板的三根滑杆（字号 / 用户名不透明度 / 衬底浓度）实时驱动 HUD；OBS 那边要靠
-「复制 OBS CSS」把样式表和滑杆取值一起粘进浏览器源。
+三根滑杆（字号 / 用户名不透明度 / 衬底浓度）和预设会通过 relay 的 `style` 消息
+实时推给 OBS 页，用户不用手动同步。`LocalRelayServer` 把最后一条 `style` 存着，
+后连上来的浏览器源也能拿到。
 
-改了 CSS 记得给 `Preferences.currentCSSVersion` +1，否则老用户存在 UserDefaults 里的
-旧 CSS 不会升级。注意这个升级会覆盖用户自己改过的 CSS，别为了小改动乱 +1。
+`DefaultStyle.swift` 现在只是**可选的额外覆盖**，一份带注释的起点，不是完整样式表。
+改它的结构才需要给 `Preferences.currentCSSVersion` +1——这个升级会覆盖用户自己写的 CSS，
+别为了小改动乱 +1。
 
 设计取向是克制：不用卡片、徽章色块、高饱和色，靠字重和透明度分层。
 

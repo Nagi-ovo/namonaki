@@ -13,7 +13,8 @@ macOS 上的 B 站直播弹幕悬浮窗。窗口和弹幕都是原生 AppKit 画
 - **右键回复**：右键一条弹幕直接 @ 对方，左键仍然可以正常选中复制文字
 - **发弹幕和表情**：⌥⌘D 唤出发送框，支持直播间表情和你自己的装扮表情
 - **样式随便改**：三套预设，字号 / 用户名清晰度 / 衬底浓度实时可调
-- **和 OBS 共用连接**：App 只建一条 B 站连接，HUD 原生渲染，OBS 走本机 relay 的网页
+- **和 OBS 共用连接与样式**：App 只建一条 B 站连接，HUD 原生渲染，OBS 走本机 relay
+  的网页；调滑杆两边一起变，不用手动同步
 - **冷启动不空白**：缓存最近 40 条弹幕，重开先铺回去
 
 ## 装 Namonaki
@@ -68,15 +69,15 @@ open build/Namonaki.app
 
 ## 开发 OBS 渲染页
 
-桌面弹幕窗是原生绘制的，不涉及网页。App 内带的 blivechat 渲染包只服务 OBS 浏览器源，
-普通编译不需要前端工具。修改 `../blivechat/frontend` 后才需要用 **bun** 重建（不要用 npm）：
+桌面弹幕窗是原生绘制的，不涉及网页。OBS 浏览器源用的是 `web/` 里的 Svelte 页，
+产物已提交在 `Resources/Renderer`，普通编译不需要前端工具。改了 `web/` 才要重建
+（用 **bun**，不要用 npm）：
 
 ```sh
-cd ../blivechat/frontend
-PROD_SOURCE_MAP=false bun run build
-rsync -a --delete dist/ ../../namonaki/Resources/Renderer/
+cd web && bun install && bun run build
 ```
 
 ## 许可证
 
-MIT。blivechat 同样是 MIT，作者 [xfgryujk](https://github.com/xfgryujk)。
+MIT。开放平台协议的实现参考了 [blivechat](https://github.com/xfgryujk/blivechat)（同为 MIT，
+作者 xfgryujk）；早期版本直接内嵌它的前端，现在收发和渲染都是本项目自己的实现。

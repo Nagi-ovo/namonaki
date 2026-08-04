@@ -9,25 +9,29 @@ struct RendererBundleTests {
             .deletingLastPathComponent()
     }
 
+    /// The bundle checked in under `Resources/Renderer` is what ships inside the app, so
+    /// it has to be a real build of `web/` — not a stale copy, and never with source maps.
     @Test func vendorsNativeRelayRendererWithoutSourceMaps() throws {
         let renderer = projectRoot.appendingPathComponent("Resources/Renderer", isDirectory: true)
         #expect(FileManager.default.fileExists(
             atPath: renderer.appendingPathComponent("index.html").path
         ))
 
-        let javascriptRoot = renderer.appendingPathComponent("js", isDirectory: true)
-        let files = try FileManager.default.contentsOfDirectory(
-            at: javascriptRoot,
-            includingPropertiesForKeys: nil
-        )
+        let files = try FileManager.default.subpathsOfDirectory(atPath: renderer.path)
+            .map { renderer.appendingPathComponent($0) }
         #expect(!files.contains(where: { $0.pathExtension == "map" }))
 
-        let scripts = files
-            .filter { $0.pathExtension == "js" }
-            .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
-            .joined(separator: "\n")
+        func contents(ofExtension ext: String) -> String {
+            files
+                .filter { $0.pathExtension == ext }
+                .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+                .joined(separator: "\n")
+        }
+
+        let scripts = contents(ofExtension: "js")
         #expect(scripts.contains("Namonaki relay message parse failed"))
         #expect(scripts.contains("/events?token="))
+        #expect(contents(ofExtension: "css").contains("--nmk-font-size"))
     }
 
     @Test func webViewDoesNotAllowArbitraryCleartextLoads() throws {

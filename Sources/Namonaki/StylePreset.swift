@@ -1,7 +1,7 @@
 import Foundation
 
-/// 几套现成的弹幕风格。共用同一份基础 CSS，靠变量和少量补丁拉开差别，
-/// 这样改基础样式时三套一起受益，不会各写一份互相跑偏。
+/// Ready-made looks. Each is only a set of slider values plus, for `minimal`, a layout
+/// switch that both renderers honour — there is no per-preset stylesheet to drift.
 enum StylePreset: String, CaseIterable, Identifiable {
     case restrained
     case highContrast
@@ -50,25 +50,4 @@ enum StylePreset: String, CaseIterable, Identifiable {
         }
     }
 
-    var css: String {
-        switch self {
-        case .restrained, .highContrast:
-            DefaultStyle.css
-        case .minimal:
-            DefaultStyle.css + """
-
-            /* ---------- 极简：去掉头像，阴影加重补回可读性 ---------- */
-            #author-photo { display: none !important; }
-            yt-live-chat-text-message-renderer {
-              padding: 3px 12px !important;
-              margin: 0 !important;
-              backdrop-filter: none !important;
-            }
-            #content {
-              text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85),
-                           0 0 2px rgba(0, 0, 0, 0.7) !important;
-            }
-            """
-        }
-    }
 }

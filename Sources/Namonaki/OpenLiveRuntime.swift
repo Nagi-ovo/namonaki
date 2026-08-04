@@ -100,6 +100,11 @@ final class OpenLiveRuntime: ObservableObject {
         }
     }
 
+    /// Hands the current look to the relay so the OBS page can follow it.
+    func publishStyle(_ payload: Data) {
+        relay.setStyle(payload)
+    }
+
     func shutdown() async {
         generation += 1
         connectionTask?.cancel()

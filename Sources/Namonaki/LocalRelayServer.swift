@@ -22,7 +22,9 @@ final class LocalRelayServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "fun.nagi.namonaki.local-relay")
     private var listener: NWListener?
     private var clients: [UUID: NWConnection] = [:]
+    /// Latched so a browser source that connects late still gets the current state.
     private var latestStatus: Data?
+    private var latestStyle: Data?
 
     init(token: String, rendererRoot: URL, port: UInt16 = defaultPort) {
         self.token = token
@@ -63,6 +65,15 @@ final class LocalRelayServer: @unchecked Sendable {
     func setStatus(_ payload: Data) {
         queue.async { [weak self] in
             self?.latestStatus = payload
+            self?.broadcast(payload)
+        }
+    }
+
+    /// The look the HUD is currently using, so the OBS page tracks the sliders without
+    /// anyone pasting CSS.
+    func setStyle(_ payload: Data) {
+        queue.async { [weak self] in
+            self?.latestStyle = payload
             self?.broadcast(payload)
         }
     }
@@ -198,8 +209,8 @@ final class LocalRelayServer: @unchecked Sendable {
             }
             let id = UUID()
             self.clients[id] = connection
-            if let status = self.latestStatus {
-                connection.send(content: Self.webSocketTextFrame(status), completion: .idempotent)
+            for latched in [self.latestStyle, self.latestStatus].compactMap({ $0 }) {
+                connection.send(content: Self.webSocketTextFrame(latched), completion: .idempotent)
             }
             self.receiveWebSocket(on: connection, id: id)
         })

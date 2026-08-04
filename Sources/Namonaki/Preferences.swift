@@ -6,8 +6,9 @@ import Combine
 final class Preferences: ObservableObject {
     static let shared = Preferences()
 
-    /// 内置样式表每次改版就 +1
-    private static let currentCSSVersion = 13
+    /// Bumped whenever the OBS stylesheet changes shape. 14 is the move off blivechat's
+    /// markup to the bundled Svelte page.
+    private static let currentCSSVersion = 14
 
     @Published var authCode: String {
         didSet {
@@ -55,6 +56,20 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(showOutline, forKey: Keys.showOutline) }
     }
 
+    /// The current look, pushed to the OBS page over the relay so it follows the sliders
+    /// live. Custom CSS is layered on top of this, not instead of it.
+    var obsStylePayload: Data {
+        (try? JSONSerialization.data(withJSONObject: [
+            "type": "style",
+            "data": [
+                "fontSize": fontSize,
+                "nameOpacity": nameOpacity,
+                "backdropAlpha": backdropAlpha,
+                "preset": presetID,
+            ],
+        ])) ?? Data()
+    }
+
     /// Slider values as CSS, appended after the stylesheet when copying it for OBS.
     var variableCSS: String {
         """
@@ -99,10 +114,11 @@ final class Preferences: ObservableObject {
         showDebugMessages = defaults.bool(forKey: Keys.showDebugMessages)
         showOutline = defaults.bool(forKey: Keys.showOutline)
 
-        // 内置样式改版后，把还停在旧版本的用户升上来，
-        // 否则新加的规则（比如衬底）永远不会生效
+        // Move anyone still on an older sheet forward. This overwrites whatever they had
+        // edited, so only bump the version when the old sheet has genuinely stopped
+        // working — as it did when the OBS page changed its markup.
         if defaults.integer(forKey: Keys.cssVersion) < Self.currentCSSVersion {
-            customCSS = preset.css
+            customCSS = DefaultStyle.css
             defaults.set(Self.currentCSSVersion, forKey: Keys.cssVersion)
         }
     }
@@ -146,10 +162,10 @@ final class Preferences: ObservableObject {
         StylePreset(rawValue: presetID) ?? .restrained
     }
 
-    /// 套用预设：样式表和几根滑杆一起改，免得只换一半
+    /// Applying a preset moves every slider with it; leaving custom CSS alone, since
+    /// that is the user's own work on top.
     func apply(_ preset: StylePreset) {
         presetID = preset.rawValue
-        customCSS = preset.css
         fontSize = preset.fontSize
         nameOpacity = preset.nameOpacity
         backdropAlpha = preset.backdropAlpha

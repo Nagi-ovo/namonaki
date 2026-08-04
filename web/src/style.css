@@ -1,0 +1,186 @@
+/*
+ * The OBS browser source's own look. Values mirror `DanmakuStyle.swift`, which draws the
+ * desktop HUD — change one and change the other, or the two outputs drift apart.
+ *
+ * The three variables at the top are pushed live by the app whenever a slider moves, so
+ * OBS follows the HUD without anyone pasting anything. `DefaultStyle.swift` is the
+ * optional user override on top of this.
+ */
+
+:root {
+  --nmk-font-size: 21px;
+  --nmk-name-opacity: 0.75;
+  --nmk-backdrop-alpha: 0.38;
+  /* Avatars track the font size; two sliders fighting each other buys nothing. */
+  --nmk-avatar-size: calc(var(--nmk-font-size) * 1.3);
+  --nmk-accent: rgba(235, 197, 133, 0.95);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+    "Hiragino Sans GB", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+.feed {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+/* ---------- One message ---------- */
+
+.row {
+  display: flex;
+  /* Centred rather than top-aligned: with top alignment the avatar always reads as
+     sitting too high, and a full-image emote makes the gap obvious. */
+  align-items: center;
+  padding: 7px 12px;
+  margin: 3px 8px;
+  border-radius: 9px;
+  /* Text shadow alone is not enough over a bright stream; a dark pad is. Drag the
+     setting to 0 when the scene behind it is already dark. */
+  background: rgba(12, 12, 14, var(--nmk-backdrop-alpha));
+  backdrop-filter: blur(2px);
+  animation: nmk-in 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes nmk-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.avatar {
+  flex: 0 0 auto;
+  width: var(--nmk-avatar-size);
+  height: var(--nmk-avatar-size);
+  margin-right: 10px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar--empty {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.body {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.5;
+  /* Readable over a bright scene, but restrained — too much blur is harder to read,
+     not easier. */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.name {
+  font-size: calc(var(--nmk-font-size) - 2px);
+  font-weight: 500;
+  color: rgba(255, 255, 255, var(--nmk-name-opacity));
+}
+
+/* Rank shows up as name colour only — no badges, no filled chips. */
+.name[data-rank="owner"] {
+  color: var(--nmk-accent);
+}
+.name[data-rank="moderator"] {
+  color: rgba(145, 187, 222, 0.95);
+}
+.name[data-rank="guard"] {
+  color: rgba(160, 205, 198, 0.95);
+}
+
+/* Without the colon the name and the message run together and it stops being obvious
+   who said what. It follows the message, not the rank colour. */
+.colon {
+  font-size: calc(var(--nmk-font-size) - 2px);
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.text {
+  font-size: var(--nmk-font-size);
+  color: rgba(255, 255, 255, 0.97);
+  letter-spacing: 0.01em;
+}
+
+/* Height only — pinning the width squashes anything that is not square. */
+.emote {
+  height: 60px;
+  width: auto;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.gift-icon {
+  height: calc(var(--nmk-font-size) * 1.4);
+  width: auto;
+  vertical-align: -0.35em;
+  margin-left: 4px;
+}
+
+/* ---------- Super chats and new guards ---------- */
+
+.row--highlight {
+  margin: 8px 14px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--nmk-accent);
+  background: rgba(12, 12, 14, calc(var(--nmk-backdrop-alpha) + 0.14));
+}
+
+.row--highlight .name {
+  color: var(--nmk-accent);
+}
+
+.price {
+  margin-left: 8px;
+  font-size: calc(var(--nmk-font-size) - 2px);
+  color: var(--nmk-accent);
+}
+
+.row--superChat .text {
+  display: block;
+  margin-top: 2px;
+}
+
+/* ---------- Connection status ---------- */
+
+.status {
+  margin: 2px 20px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------- Minimal preset ---------- */
+
+:root[data-preset="minimal"] .avatar {
+  display: none;
+}
+
+:root[data-preset="minimal"] .row {
+  padding: 3px 12px;
+  margin: 0;
+  backdrop-filter: none;
+}
+
+:root[data-preset="minimal"] .body {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.7);
+}
