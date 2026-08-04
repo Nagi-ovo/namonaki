@@ -10,21 +10,31 @@ macOS 菜单栏 app，在桌面上悬浮一个 B 站直播弹幕窗。AppKit 写
 pkill -x Namonaki; open build/Namonaki.app    # 双击不会重启已在运行的实例，必须先杀
 ```
 
-依赖 blivechat 服务器跑在 `127.0.0.1:12450`（源码在 `../blivechat`）：
+不再依赖 Python / uv 进程。App 自己在 `127.0.0.1:12451` 提供内置渲染页
+和 WebSocket relay。`Resources/Renderer` 是随 app 打包的 blivechat 前端产物。
+
+只在修改 `../blivechat/frontend` 时用 **bun** 重建，不要用 npm：
 
 ```
-cd ../blivechat && uv run main.py --host 127.0.0.1 --port 12450
+cd ../blivechat/frontend
+PROD_SOURCE_MAP=false bun run build
+rsync -a --delete dist/ ../../namonaki/Resources/Renderer/
 ```
 
-blivechat 前端用 **bun** 编译，不要用 npm：`cd frontend && bun install && bun run build`。
 被拦的两个 postinstall 都是 core-js 的赞助广告，忽略即可。
 
 ## 踩过的坑
 
-**同一个身份码不能同时开多路直连。** OBS 浏览器源和这个窗口各连各的，B 站会踢掉
-session，报「配置上限」和 `Ending Open Live session`。解法是走服务器转发：URL 参数
-`relayMessagesByServer=true`（app 里已强制加上），blivechat 后端只占一个名额。
-**OBS 那条 URL 得手动开这个开关。** 服务器上残留的旧 session 只能靠重启 blivechat 清掉。
+**同一个身份码不能同时开多路直连。** `OpenLiveRuntime` 维护唯一上游，
+HUD 和 OBS 都从 `LocalRelayServer` 收消息。OBS 必须用设置页「复制 OBS 地址」生成的
+`127.0.0.1:12451` URL，不要再用旧 blivechat 房间 URL。切换过来前先停掉旧 Python
+blivechat，否则它残留的开放平台 session 仍会占名额。
+
+**收弹幕的网络边界是硬编码 allowlist。** 身份码只能 POST 到
+`https://api1.blive.chat` / `api2.blive.chat` 的 start / heartbeat / end 三个路径；
+WSS 只允许 `wss://broadcastlv.chat.bilibili.com:443/sub`。不要放宽为任意 URL。
+公共服务端代码会在 `7007` 时记录格式正确但无效的身份码，所以必须保留本地格式校验，
+且不能对 `7007` 自动重试。不要宣称第三方服务器“什么都不记录”。
 
 **窗口拉不到屏幕顶部**，内置屏卡住、外接屏正常时，三件事缺一不可：override
 `constrainFrameRect` 原样返回、窗口 level 高过菜单栏（`CGWindowLevelForKey(.statusWindow) + 1`）、
@@ -38,9 +48,9 @@ Info.plist 里 `NSPrefersDisplaySafeAreaCompatibilityMode = false`（关掉刘�
 最小的编辑菜单（见 `AppDelegate.setUpMainMenu`）。同理，菜单栏 app 平时不是激活状态，
 所以 ⌘E 这类快捷键只在 app 激活时才响应，别指望它随时可用。
 
-**头像加载不出来（破图）** 是 ATS 拦的：blivechat 把头像 URL 的协议去掉了
-（`//i0.hdslb.com/…`），页面是 http，头像就按 http 请求。Info.plist 里放行
-`NSAllowsArbitraryLoadsInWebContent`。OBS 用 CEF 没这个限制，所以那边一直是好的。
+**头像 URL 必须在 Swift 映射层统一改成 HTTPS。** B 站会给
+`//i0.hdslb.com/…` 或 `http://…`；`OpenLiveEventMapper.secureURL` 负责升级。不要重新打开
+`NSAllowsArbitraryLoadsInWebContent`，内置页 CSP 也只放行 B 站图片域名。
 
 **blivechat 页面上有两个 `id="items"`**——`Ticker.vue`（顶部付费滚动条）一个，
 `ChatRenderer/index.vue`（真正的弹幕容器）一个，而 Ticker 在 DOM 顺序上排在前面。
@@ -58,10 +68,10 @@ Info.plist 里 `NSPrefersDisplaySafeAreaCompatibilityMode = false`（关掉刘�
 
 ## 身份码
 
-在 https://play-live.bilibili.com/ 拿，12–14 位大写字母数字。**等同密码**，房间 URL 里
-就带着它，日志和截图都要脱敏。刷新会让旧的立刻作废，换了之后 app 和 OBS 两边都要重新粘。
-
-排查时不要 `defaults read fun.nagi.namonaki`——会把带身份码的 roomURL 整条打出来。
+在 https://play-live.bilibili.com/ 拿，12–14 位大写字母数字。**等同密码**，
+日志和截图都要脱敏。它只存在本机 `credentials.json`（0600），不存 UserDefaults；
+旧版 `roomURL` 会在首次启动时拆出身份码后删除。刷新身份码后只需在 app 里重新粘贴，
+OBS 的本机 URL 不需改。
 
 ## 发弹幕
 

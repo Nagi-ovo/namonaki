@@ -13,29 +13,8 @@ macOS 上的 B 站直播弹幕悬浮窗。原生 AppKit 写的，平时对鼠标
 - **右键回复**：右键一条弹幕直接 @ 对方，左键仍然可以正常选中复制文字
 - **发弹幕和表情**：⌥⌘D 唤出发送框，支持直播间表情和你自己的装扮表情
 - **样式随便改**：三套预设，字号 / 用户名清晰度 / 衬底浓度实时可调，CSS 可以自己写
-- **和 OBS 共用一套样式**：设置里一键复制 CSS 贴进 OBS 浏览器源，两边长得一样
+- **和 OBS 共用连接与样式**：App 只建一条 B 站连接，HUD / OBS 都走本机 relay
 - **冷启动不空白**：缓存最近 40 条弹幕，重开先铺回去
-
-## 装之前：先跑 blivechat
-
-这个 app 自己不连 B 站，弹幕来自 [blivechat](https://github.com/xfgryujk/blivechat)——
-一个成熟的开源弹幕服务。所以得先把它跑起来。
-
-需要 [uv](https://docs.astral.sh/uv/) 和 [Node.js](https://nodejs.org/)：
-
-```sh
-git clone https://github.com/xfgryujk/blivechat.git && cd blivechat
-cd frontend && npm i && npm run build && cd ..   # 用 bun 更快
-uv run main.py --host 127.0.0.1 --port 12450     # 依赖会自动装
-```
-
-前端那步省不掉——blivechat 的网页要先编译出来，不然打开是 404。
-
-跑起来后打开 http://127.0.0.1:12450 ：
-
-1. 填**身份码**（在 https://play-live.bilibili.com/ 拿，用你的 B 站号登录就能看到）
-2. 打开「**通过服务器转发消息**」——不开的话这个 app 和 OBS 会抢同一个连接名额，互相把对方踢掉
-3. 点「复制房间URL」
 
 ## 装 Namonaki
 
@@ -47,7 +26,11 @@ git clone <this repo> && cd Namonaki
 open build/Namonaki.app
 ```
 
-第一次打开会自动弹设置面板，把刚才复制的房间地址粘进去就出弹幕了。
+不需要 Python、uv 或单独启动 blivechat。第一次打开会自动弹设置面板：
+
+1. 去 https://play-live.bilibili.com/ 复制 12–14 位身份码。
+2. 在「连接」里粘贴，点「保存并连接」。
+3. OBS 需要弹幕时，点「复制 OBS 地址」，把本机 URL 设成浏览器源。
 
 菜单栏会多一个气泡图标，所有功能都在那儿。两个全局快捷键：
 
@@ -59,8 +42,17 @@ open build/Namonaki.app
 设置 → 账号 → 登录 B 站，扫码即可。登录凭证存在本机文件里（`~/Library/Application Support/Namonaki/`，
 权限 0600），不上传任何地方。发送走 B 站官方接口，本地限速每秒一条避免撞风控。
 
-**收弹幕和发弹幕是两条独立的路**：收走 blivechat 的开放平台接口（只读，认身份码），
+**收弹幕和发弹幕是两条独立的路**：收弹幕只认开放平台身份码，
 发才需要你的账号登录态。不想发弹幕就完全不用登录。
+
+## 连接与隐私
+
+- Swift 把身份码通过 HTTPS 发给 `api1.blive.chat` / `api2.blive.chat`，用来换取 B 站开放平台会话。这是 blivechat 项目的公共 API，不是你自己的服务器。
+- 公共 API 必然能看到来源 IP、身份码和会话的 room / game ID。按当前开源服务端代码，过期/错误但格式正确的身份码在返回 `7007` 时还会写入服务端日志。App 会先做本地格式检查，并且对 `7007` 绝不自动重试，但无法承诺第三方服务器「什么都不记录」。
+- 弹幕数据由 App 直连 `broadcastlv.chat.bilibili.com` 接收。服务器返回的 WSS 也有本地 allowlist，不会跟随到任意域名。
+- HUD / OBS 仅连本机 `127.0.0.1:12451`。OBS URL 只带随机本机令牌，不带身份码。
+- B 站账号 Cookie（`SESSDATA` / `bili_jct`）、收到的弹幕内容和本场 OBS 令牌不会发给 blivechat 公共 API。
+- 身份码不进 UserDefaults 和日志，保存在 `~/Library/Application Support/Namonaki/credentials.json`（权限 0600）。
 
 ## 已知限制
 
@@ -71,8 +63,19 @@ open build/Namonaki.app
 **签名**：`build.sh` 用的是本地临时签名，换台机器下载会被 Gatekeeper 拦。
 自己编译最省事。
 
-**身份码是敏感信息**：房间地址里就带着它，等同密码。直播时别把设置面板切到画面上，
-截图分享前也记得糊掉。app 里默认只显示到主机名，需要核对时可以「临时显示」8 秒。
+**身份码是敏感信息**：等同密码。设置页默认用密码框隐藏，
+点「显示」也会在 8 秒后自动收起；直播和截图时仍要注意别露出。
+
+## 开发内置渲染页
+
+App 内已带 blivechat 渲染包，普通编译不需要前端工具。修改 `../blivechat/frontend`
+后才需要用 **bun** 重建（不要用 npm）：
+
+```sh
+cd ../blivechat/frontend
+PROD_SOURCE_MAP=false bun run build
+rsync -a --delete dist/ ../../namonaki/Resources/Renderer/
+```
 
 ## 许可证
 

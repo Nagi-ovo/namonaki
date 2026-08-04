@@ -1,8 +1,7 @@
 import Foundation
 import Combine
 
-/// 所有设置都存在 UserDefaults 里，退出后保留。
-/// 房间 URL 里带身份码，属于敏感信息，只留在本机。
+/// 普通设置存在 UserDefaults；身份码单独存在权限受限的本地凭据文件。
 @MainActor
 final class Preferences: ObservableObject {
     static let shared = Preferences()
@@ -10,8 +9,15 @@ final class Preferences: ObservableObject {
     /// 内置样式表每次改版就 +1
     private static let currentCSSVersion = 13
 
-    @Published var roomURL: String {
-        didSet { defaults.set(roomURL, forKey: Keys.roomURL) }
+    @Published var authCode: String {
+        didSet {
+            let normalized = authCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if normalized.isEmpty {
+                Keychain.delete(Keys.authCode)
+            } else {
+                Keychain.set(normalized, for: Keys.authCode)
+            }
+        }
     }
     @Published var customCSS: String {
         didSet { defaults.set(customCSS, forKey: Keys.customCSS) }
@@ -63,7 +69,8 @@ final class Preferences: ObservableObject {
     private let defaults = UserDefaults.standard
 
     private enum Keys {
-        static let roomURL = "roomURL"
+        static let legacyRoomURL = "roomURL"
+        static let authCode = "openLiveAuthCode"
         static let customCSS = "customCSS"
         static let opacity = "opacity"
         static let alwaysOnTop = "alwaysOnTop"
@@ -79,7 +86,7 @@ final class Preferences: ObservableObject {
     }
 
     private init() {
-        roomURL = defaults.string(forKey: Keys.roomURL) ?? ""
+        authCode = Self.loadAndMigrateAuthCode(defaults: defaults)
         let savedCSS = defaults.string(forKey: Keys.customCSS)
         customCSS = (savedCSS?.isEmpty == false) ? savedCSS! : DefaultStyle.css
         opacity = defaults.object(forKey: Keys.opacity) as? Double ?? 1.0
@@ -98,6 +105,28 @@ final class Preferences: ObservableObject {
             customCSS = preset.css
             defaults.set(Self.currentCSSVersion, forKey: Keys.cssVersion)
         }
+    }
+
+    /// 旧版把身份码放在 UserDefaults 的整条 URL 里。首次读取后立即拆出凭据并删除旧值。
+    private static func loadAndMigrateAuthCode(defaults: UserDefaults) -> String {
+        if let saved = Keychain.get(Keys.authCode)?.uppercased() {
+            if OpenLiveRuntime.isValidAuthCode(saved) {
+                defaults.removeObject(forKey: Keys.legacyRoomURL)
+                return saved
+            }
+            Keychain.delete(Keys.authCode)
+        }
+
+        let legacy = defaults.string(forKey: Keys.legacyRoomURL) ?? ""
+        defaults.removeObject(forKey: Keys.legacyRoomURL)
+        guard let code = legacy
+            .split(whereSeparator: { $0 == "/" || $0 == "?" || $0 == "&" || $0 == "=" })
+            .map({ String($0).uppercased() })
+            .first(where: { OpenLiveRuntime.isValidAuthCode($0) }) else {
+            return ""
+        }
+        Keychain.set(code, for: Keys.authCode)
+        return code
     }
 
     var savedFrame: NSRect? {

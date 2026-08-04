@@ -29,6 +29,7 @@ final class HUDWindow: NSWindow {
     private let webView: ChatWebView
     private var cancellables = Set<AnyCancellable>()
     private let prefs = Preferences.shared
+    private let runtime = OpenLiveRuntime.shared
     private weak var dragOverlay: DragOverlay?
 
     /// 编辑布局模式：窗口临时可点、可拖、可缩放，并画出边框好让人看清范围。
@@ -141,9 +142,13 @@ final class HUDWindow: NSWindow {
             .store(in: &cancellables)
 
 
-        prefs.$roomURL
+        prefs.$authCode
             .dropFirst()
-            .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.reload() }
+            .store(in: &cancellables)
+
+        runtime.$relayState
+            .removeDuplicates()
             .sink { [weak self] _ in self?.reload() }
             .store(in: &cancellables)
 
@@ -174,31 +179,19 @@ final class HUDWindow: NSWindow {
     }
 
     func reload() {
-        guard let url = resolvedRoomURL() else {
+        guard !prefs.authCode.isEmpty else {
             webView.loadHTMLString(Self.placeholderHTML, baseURL: nil)
             return
         }
-        webView.load(URLRequest(url: url))
-    }
-
-    /// blivechat 的连接状态提示（Connecting / Disconnected …）由 URL 参数控制，
-    /// 这里按设置改写，用户不用回网页里翻开关。
-    private func resolvedRoomURL() -> URL? {
-        let raw = prefs.roomURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var comps = URLComponents(string: raw), comps.scheme != nil else { return nil }
-
-        var items = comps.queryItems ?? []
-        items.removeAll { $0.name == "showDebugMessages" }
-        items.append(URLQueryItem(name: "showDebugMessages", value: prefs.showDebugMessages ? "true" : "false"))
-
-        // 同一个身份码不能同时开多个直连（OBS 的浏览器源 + 这个窗口就会打架，
-        // B 站会把 session 踢掉）。走服务器转发的话，blivechat 后端只占一个名额，
-        // 前端要开几个都行。
-        items.removeAll { $0.name == "relayMessagesByServer" }
-        items.append(URLQueryItem(name: "relayMessagesByServer", value: "true"))
-
-        comps.queryItems = items
-        return comps.url
+        if case .failed = runtime.relayState {
+            webView.loadHTMLString(Self.relayFailedHTML, baseURL: nil)
+            return
+        }
+        guard runtime.relayState == .ready, let url = runtime.hudURL else {
+            webView.loadHTMLString(Self.startingHTML, baseURL: nil)
+            return
+        }
+        webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
     }
 
     /// 把 CSS 塞进一个 JS 字符串字面量。用 JSON 编码最保险，
@@ -622,7 +615,27 @@ final class HUDWindow: NSWindow {
       color:rgba(255,255,255,0.6);display:flex;align-items:center;
       justify-content:center;height:100vh;text-align:center;
       text-shadow:0 1px 3px rgba(0,0,0,0.6)">
-      还没设置房间地址<br>菜单栏图标 → 设置
+      还没设置身份码<br>菜单栏图标 → 设置
+    </body></html>
+    """
+
+    private static let startingHTML = """
+    <html><body style="margin:0;background:transparent;
+      font:15px/1.6 -apple-system,'PingFang SC',sans-serif;
+      color:rgba(255,255,255,0.6);display:flex;align-items:center;
+      justify-content:center;height:100vh;text-align:center;
+      text-shadow:0 1px 3px rgba(0,0,0,0.6)">
+      本机弹幕页正在启动…
+    </body></html>
+    """
+
+    private static let relayFailedHTML = """
+    <html><body style="margin:0;background:transparent;
+      font:15px/1.6 -apple-system,'PingFang SC',sans-serif;
+      color:rgba(255,255,255,0.7);display:flex;align-items:center;
+      justify-content:center;height:100vh;text-align:center;
+      text-shadow:0 1px 3px rgba(0,0,0,0.6)">
+      本机转发启动失败<br>请检查 12451 端口后重启 App
     </body></html>
     """
 }

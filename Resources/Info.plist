@@ -27,14 +27,10 @@
          窗口就拉不到菜单栏那一段。这里声明由 app 自己处理 safe area。 -->
     <key>NSPrefersDisplaySafeAreaCompatibilityMode</key>
     <false/>
-    <!-- blivechat 跑在 127.0.0.1 的 http 上，需要放行本地明文连接。
-         头像 URL 被 blivechat 去掉了协议（//i0.hdslb.com/…），页面是 http，
-         所以头像也走 http，得一并放行 WebView 内的明文请求，否则显示破图。 -->
+    <!-- 内置页面只从 127.0.0.1 加载；头像等资源在 Swift 中统一改为 HTTPS。 -->
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
-        <true/>
-        <key>NSAllowsArbitraryLoadsInWebContent</key>
         <true/>
     </dict>
 </dict>

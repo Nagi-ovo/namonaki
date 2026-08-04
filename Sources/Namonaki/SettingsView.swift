@@ -24,65 +24,86 @@ struct SettingsView: View {
 
 private struct ConnectionTab: View {
     @ObservedObject private var prefs = Preferences.shared
+    @ObservedObject private var runtime = OpenLiveRuntime.shared
+    @State private var draft = Preferences.shared.authCode
     @State private var revealed = false
     @State private var hint: String?
+    @State private var copiedOBS = false
 
-    private var isSet: Bool {
-        !prefs.roomURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var isSet: Bool { !prefs.authCode.isEmpty }
+
+    private var normalizedDraft: String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+
+    private var statusColor: Color {
+        if case .failed = runtime.relayState { return .red }
+        switch runtime.connectionState {
+        case .connected: return .green
+        case .failed: return .red
+        case .idle: return .secondary.opacity(0.5)
+        case .connecting, .authenticating, .reconnecting: return .orange
+        }
+    }
+
+    private var statusLabel: String {
+        if case .failed = runtime.relayState {
+            return "本机转发启动失败（端口 12451 可能被占用）"
+        }
+        return runtime.connectionState.label
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(isSet ? Color.green : Color.secondary.opacity(0.4))
+                    .fill(statusColor)
                     .frame(width: 8, height: 8)
-                Text(isSet ? "房间已设置" : "还没设置房间")
+                Text(statusLabel)
                     .font(.system(size: 13, weight: .medium))
                 Spacer()
             }
 
-            // 地址里带身份码，直播时可能被拍到，所以默认只显示到主机名
-            Group {
-                if revealed {
-                    TextField("", text: $prefs.roomURL, prompt: Text("http://127.0.0.1:12450/room/…"))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                } else {
-                    Text(maskedDescription)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 5)
-                        .padding(.horizontal, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(Color.secondary.opacity(0.08))
-                        )
-                }
-            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("开放平台身份码")
+                    .font(.system(size: 12, weight: .medium))
+                HStack(spacing: 8) {
+                    Group {
+                        if revealed {
+                            TextField("12–14 位大写字母或数字", text: $draft)
+                        } else {
+                            SecureField("12–14 位大写字母或数字", text: $draft)
+                        }
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
 
-            HStack(spacing: 8) {
-                Button {
-                    pasteFromClipboard()
-                } label: {
-                    Label("从剪贴板粘贴", systemImage: "doc.on.clipboard")
+                    Button(revealed ? "隐藏" : "显示") { toggleReveal() }
+                        .disabled(draft.isEmpty)
                 }
-                .keyboardShortcut("v", modifiers: [.command, .shift])
 
-                Button(revealed ? "隐藏" : "临时显示") {
-                    toggleReveal()
+                HStack(spacing: 8) {
+                    Button {
+                        pasteFromClipboard()
+                    } label: {
+                        Label("从剪贴板粘贴", systemImage: "doc.on.clipboard")
+                    }
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
+
+                    Button("保存并连接") { save() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(normalizedDraft == prefs.authCode)
+
+                    Spacer()
+
+                    Button("清除") {
+                        draft = ""
+                        prefs.authCode = ""
+                        revealed = false
+                        hint = nil
+                    }
+                    .disabled(!isSet && draft.isEmpty)
                 }
-                .disabled(!isSet && !revealed)
-
-                Spacer()
-
-                Button("清除") {
-                    prefs.roomURL = ""
-                    revealed = false
-                    hint = nil
-                }
-                .disabled(!isSet)
             }
 
             if let hint {
@@ -93,50 +114,46 @@ private struct ConnectionTab: View {
 
             Divider()
 
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("OBS 浏览器源")
+                            .font(.system(size: 12, weight: .medium))
+                        Text("HUD 和 OBS 共用同一条 B 站连接，不再抢 session。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(copiedOBS ? "已复制" : "复制 OBS 地址") { copyOBSURL() }
+                        .disabled(runtime.obsURL == nil)
+                }
+
+                Text("http://127.0.0.1:…/room/native?token=••••••••")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
             Toggle(isOn: $prefs.showDebugMessages) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("显示连接状态消息")
-                    Text("Connecting / Disconnected 那些提示。平时关掉画面更干净，排查掉线时再打开")
+                    Text("在弹幕窗显示连接状态")
+                    Text("平时关掉更干净，排查掉线时再打开。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             .toggleStyle(.switch)
 
-            Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("怎么拿地址")
-                    .font(.system(size: 12, weight: .medium))
-                Text("打开 blivechat 页面 → 填身份码 → 点「复制房间URL」→ 回来点上面的粘贴。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("打开 blivechat 页面") {
-                    if let url = URL(string: "http://127.0.0.1:12450") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .controlSize(.small)
-                .padding(.top, 2)
-            }
-
             Spacer()
 
-            Text("地址里含身份码，等同密码。默认隐藏，「临时显示」8 秒后自动收起。")
+            Text("隐私：身份码会发给 api1/api2.blive.chat 换取 B 站会话；不会进 OBS 地址或 App 日志。账号 Cookie 和弹幕内容不会发给该服务。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .onAppear { draft = prefs.authCode }
         .onDisappear { revealed = false }
-    }
-
-    private var maskedDescription: String {
-        let raw = prefs.roomURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return "—" }
-        guard let url = URL(string: raw), let host = url.host else { return "••••••••" }
-        let port = url.port.map { ":\($0)" } ?? ""
-        return "\(url.scheme ?? "http")://\(host)\(port)/room/••••••••••"
     }
 
     private func pasteFromClipboard() {
@@ -146,13 +163,39 @@ private struct ConnectionTab: View {
             hint = "剪贴板是空的"
             return
         }
-        guard let url = URL(string: text), url.scheme != nil, url.host != nil else {
-            hint = "剪贴板里不像是个网址"
+        let candidates = [text.uppercased()] + text
+            .uppercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        guard let code = candidates.first(where: OpenLiveRuntime.isValidAuthCode) else {
+            hint = "没找到 12–14 位身份码"
             return
         }
-        prefs.roomURL = text
+        draft = code
         revealed = false
-        hint = url.path.contains("/room/") ? "✓ 已设置，弹幕窗正在重新加载" : "✓ 已设置（注意：这不像房间地址）"
+        hint = "✓ 已识别，点「保存并连接」"
+    }
+
+    private func save() {
+        guard OpenLiveRuntime.isValidAuthCode(normalizedDraft) else {
+            hint = "身份码应为 12–14 位大写字母或数字"
+            return
+        }
+        draft = normalizedDraft
+        prefs.authCode = normalizedDraft
+        revealed = false
+        hint = "✓ 已保存，正在连接"
+    }
+
+    private func copyOBSURL() {
+        guard let url = runtime.obsURL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        copiedOBS = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copiedOBS = false
+        }
     }
 
     private func toggleReveal() {
@@ -518,7 +561,7 @@ private struct StyleTab: View {
                 Text("弹幕样式 CSS")
                     .font(.system(size: 13, weight: .medium))
                 Spacer()
-                Button(copied ? "已复制" : "复制给 OBS") { copyCSS() }
+                Button(copied ? "已复制" : "复制 OBS CSS") { copyCSS() }
                     .controlSize(.small)
                 Button("恢复默认") { prefs.resetCSS() }
                     .controlSize(.small)

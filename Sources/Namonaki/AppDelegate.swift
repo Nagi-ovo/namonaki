@@ -11,8 +11,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
     private let prefs = Preferences.shared
+    private let runtime = OpenLiveRuntime.shared
+    private var terminationPending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        runtime.start(authCode: prefs.authCode)
+
+        prefs.$authCode
+            .dropFirst()
+            .removeDuplicates()
+            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+            .sink { [weak self] code in self?.runtime.updateAuthCode(code) }
+            .store(in: &cancellables)
+
         let window = HUDWindow()
         window.alphaValue = prefs.opacity
         window.level = prefs.alwaysOnTop ? HUDWindow.overlayLevel : .normal
@@ -36,10 +47,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         GlobalHotKey.shared.register()
 
-        // 没配地址时直接把设置面板推到脸上，省得找
-        if prefs.roomURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // 没配身份码时直接把设置面板推到脸上，省得找
+        if prefs.authCode.isEmpty {
             showSettings()
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationPending else { return .terminateLater }
+        terminationPending = true
+        Task { [runtime] in
+            await runtime.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     // MARK: - 主菜单
