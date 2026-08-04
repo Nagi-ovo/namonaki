@@ -12,6 +12,8 @@ final class BilibiliAccount: ObservableObject {
     @Published private(set) var uid: Int?
     @Published private(set) var roomID: Int?
     @Published private(set) var lastError: String?
+    /// 由服务端实际拒绝/接受测出的长度档位，按账号保存到 UserDefaults。
+    @Published private(set) var detectedDanmakuLimit: Int?
 
     /// 手动指定的直播间号，留空就用登录账号自己的直播间
     @Published var manualRoomID: String {
@@ -34,11 +36,14 @@ final class BilibiliAccount: ObservableObject {
     private var sessData: String? { cachedSess }
     private var csrf: String? { cachedCSRF }
     private var lastSentAt: Date?
+    private let danmakuLimitStore = DanmakuLimitStore()
 
     private init() {
         hiddenPackIDs = Set(UserDefaults.standard.stringArray(forKey: "hiddenPackIDs") ?? [])
         manualRoomID = UserDefaults.standard.string(forKey: "manualRoomID") ?? ""
         userName = UserDefaults.standard.string(forKey: "biliUserName")
+        uid = danmakuLimitStore.currentUID
+        detectedDanmakuLimit = danmakuLimitStore.currentLimit
         let savedRoom = UserDefaults.standard.integer(forKey: "biliRoomID")
         roomID = savedRoom > 0 ? savedRoom : nil
         // 先用上次缓存的表情把面板填上，网络那边慢慢刷
@@ -74,6 +79,8 @@ final class BilibiliAccount: ObservableObject {
         userName = nil
         uid = nil
         roomID = nil
+        detectedDanmakuLimit = nil
+        danmakuLimitStore.clearCurrentAccount()
         UserDefaults.standard.removeObject(forKey: "biliUserName")
         UserDefaults.standard.removeObject(forKey: "biliRoomID")
         objectWillChange.send()
@@ -92,6 +99,7 @@ final class BilibiliAccount: ObservableObject {
                 return
             }
             uid = mid
+            detectedDanmakuLimit = danmakuLimitStore.activate(uid: mid)
             userName = data["uname"] as? String
             UserDefaults.standard.set(userName, forKey: "biliUserName")
 
@@ -235,6 +243,15 @@ final class BilibiliAccount: ObservableObject {
 
     // MARK: - 发送
 
+    struct SendResult: Equatable {
+        let originalLength: Int
+        let sentLength: Int
+        let detectedLimit: Int?
+
+        var truncatedCount: Int { originalLength - sentLength }
+        var wasTruncated: Bool { truncatedCount > 0 }
+    }
+
     enum SendError: LocalizedError {
         case notLoggedIn
         case noRoom
@@ -274,6 +291,47 @@ final class BilibiliAccount: ObservableObject {
         case .textToken:
             // 评论区的基础表情（/bfs/emote/）直播根本不渲染，当文本发出去
             try await send(emoticon.text)
+        }
+    }
+
+    /// 发送输入框里的普通文字。首次保留原文；如果服务端明确返回长度错误，
+    /// 再按 60 → 50 → 40 → 30 → 20 字逐档截短，
+    /// 最终只会有一次成功的弹幕出现在直播间。
+    func sendText(_ raw: String) async throws -> SendResult {
+        let original = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !original.isEmpty else { throw SendError.empty }
+
+        let first = DanmakuLengthPolicy.firstAttempt(
+            original, detectedLimit: detectedDanmakuLimit
+        )
+        do {
+            try await send(first)
+            return SendResult(
+                originalLength: original.count,
+                sentLength: first.count,
+                detectedLimit: detectedDanmakuLimit
+            )
+        } catch let error as SendError {
+            guard error.isLengthLimit else { throw error }
+
+            var lastLengthError = error
+            for limit in DanmakuLengthPolicy.retryLimits(afterRejectedLength: first.count) {
+                let candidate = DanmakuLengthPolicy.truncate(original, to: limit)
+                do {
+                    try await send(candidate)
+                    detectedDanmakuLimit = limit
+                    danmakuLimitStore.save(limit: limit, uid: uid)
+                    return SendResult(
+                        originalLength: original.count,
+                        sentLength: candidate.count,
+                        detectedLimit: limit
+                    )
+                } catch let retryError as SendError {
+                    guard retryError.isLengthLimit else { throw retryError }
+                    lastLengthError = retryError
+                }
+            }
+            throw lastLengthError
         }
     }
 
@@ -368,5 +426,12 @@ final class BilibiliAccount: ObservableObject {
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         let (data, _) = try await URLSession.shared.data(for: request)
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+}
+
+private extension BilibiliAccount.SendError {
+    var isLengthLimit: Bool {
+        if case .api(code: 1003212, message: _) = self { return true }
+        return false
     }
 }

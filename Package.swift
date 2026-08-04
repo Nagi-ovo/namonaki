@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "Namonaki",
             path: "Sources/Namonaki"
+        ),
+        .testTarget(
+            name: "NamonakiTests",
+            dependencies: ["Namonaki"],
+            path: "Tests/NamonakiTests"
         )
     ]
 )
