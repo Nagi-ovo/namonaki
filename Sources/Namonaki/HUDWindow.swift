@@ -1,78 +1,52 @@
 import AppKit
-import WebKit
 import Combine
 
-/// 接管右键菜单的 WebView。左键要留给网页做文字选中，
-/// 所以回复只能挂在右键上，而右键默认会弹 WebKit 自己的菜单。
-@MainActor
-final class ChatWebView: WKWebView {
-    var hoveredAuthor: (() -> String?)?
-    var onReply: (() -> Void)?
-
-    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
-        guard let author = hoveredAuthor?(), !author.isEmpty else { return }
-        menu.removeAllItems()
-        let item = NSMenuItem(title: "回复 @\(author)", action: #selector(replyAction), keyEquivalent: "")
-        item.target = self
-        menu.addItem(item)
-    }
-
-    @objc private func replyAction() {
-        onReply?()
-    }
-}
-
-/// 桌面上那个半透明弹幕窗。
-/// 无标题栏、背景透明、平时对鼠标隐形，编辑模式下可拖可缩放。
+/// The translucent danmaku window on the desktop.
+/// No title bar, transparent background, invisible to the mouse except while editing.
 @MainActor
 final class HUDWindow: NSWindow {
-    private let webView: ChatWebView
+    private let listView: DanmakuListView
     private var cancellables = Set<AnyCancellable>()
     private let prefs = Preferences.shared
     private let runtime = OpenLiveRuntime.shared
     private weak var dragOverlay: DragOverlay?
 
-    /// 编辑布局模式：窗口临时可点、可拖、可缩放，并画出边框好让人看清范围。
-    /// 平时是关的，窗口对鼠标完全隐形。
+    /// Layout editing: the window temporarily accepts clicks, can be dragged and resized,
+    /// and draws a border so its bounds are visible. Off the rest of the time.
     private(set) var isEditingLayout = false
 
-    /// JS 定期上报的每条弹幕的位置和作者，用来判断鼠标有没有悬在弹幕上
-    fileprivate struct MessageHit {
-        let rect: NSRect
-        let author: String
-    }
-    fileprivate var messageHits: [MessageHit] = []
     private var hoverTimer: Timer?
-    /// 鼠标正悬在某条弹幕上——这时窗口临时接收鼠标事件，好让人右键回复
+    /// Author under the pointer, if any — this is who right-click replies to.
     private var hoveringAuthor: String?
+    /// Whether the pointer is over a row at all. The window only stops ignoring the mouse
+    /// while this is true, so scrolling back through the feed keeps working.
+    private var hoveringRow = false
 
     func setEditingLayout(_ editing: Bool) {
         isEditingLayout = editing
-        // 只有编辑时才接鼠标事件；其余时候整个窗口对鼠标隐形，
-        // 免得那一大片透明区域挡住后面的东西。
+        // Only accept mouse events while editing; otherwise the whole window is
+        // transparent to the mouse so its empty area does not block what is behind it.
         ignoresMouseEvents = !editing
         dragOverlay?.showsGuide = editing
         dragOverlay?.isEditing = editing
         if editing {
-            // 要成为 key window 才收得到 Esc
+            // Has to be the key window to receive Esc.
             makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
     }
 
-    /// 编辑模式下按 Esc 直接完事，不用再摸回菜单栏
+    /// Esc leaves editing mode without going back to the menu bar.
     override func cancelOperation(_ sender: Any?) {
         guard isEditingLayout else { return }
         onEditingEnded?()
     }
 
-    /// 退出编辑后通知 AppDelegate 把菜单勾选状态同步过来
+    /// Lets AppDelegate re-sync the menu check mark after Esc.
     var onEditingEnded: (() -> Void)?
 
     init() {
-        let config = WKWebViewConfiguration()
-        config.suppressesIncrementalRendering = false
-        webView = ChatWebView(frame: .zero, configuration: config)
+        listView = DanmakuListView(style: .current())
 
         let frame = prefs.savedFrame ?? NSRect(x: 120, y: 120, width: 380, height: 620)
         super.init(
@@ -90,46 +64,42 @@ final class HUDWindow: NSWindow {
         backgroundColor = .clear
         hasShadow = false
         isMovableByWindowBackground = true
-        // disallowsTiling：拖到屏幕边缘时不要弹出 macOS 的窗口平铺提示，
-        // 那东西对一个 HUD 窗口只会碍事
+        // fullScreenDisallowsTiling: dragging to a screen edge should not offer macOS
+        // window tiling, which only gets in the way for a HUD.
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .fullScreenDisallowsTiling]
         standardWindowButton(.closeButton)?.isHidden = true
         standardWindowButton(.miniaturizeButton)?.isHidden = true
         standardWindowButton(.zoomButton)?.isHidden = true
 
-        // WKWebView 自己的白底也要去掉，否则窗口透明了内容还是白的
-        webView.setValue(false, forKey: "drawsBackground")
-        webView.underPageBackgroundColor = .clear
-        webView.autoresizingMask = [.width, .height]
-        webView.navigationDelegate = self
-        webView.hoveredAuthor = { [weak self] in self?.hoveringAuthor }
-        webView.onReply = { [weak self] in self?.replyToHovered() }
-
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizingMask = [.width, .height]
-        webView.frame = container.bounds
-        container.addSubview(webView)
+        listView.frame = container.bounds
+        listView.autoresizingMask = [.width, .height]
+        listView.onReply = { [weak self] author in self?.reply(to: author) }
+        container.addSubview(listView)
 
-        // WKWebView 会吃掉所有鼠标事件，窗口就拖不动了。
-        // 盖一层透明视图接管拖动，滚轮再转发回去，这样还能翻历史弹幕。
+        // A scroll view swallows mouse events, so the window could not be dragged.
+        // A transparent layer on top takes over dragging and forwards the wheel back
+        // down so the feed still scrolls.
         let overlay = DragOverlay(frame: container.bounds)
         overlay.autoresizingMask = [.width, .height]
-        overlay.forwardTarget = webView
+        overlay.forwardTarget = listView.scrollTarget
         container.addSubview(overlay)
         dragOverlay = overlay
         overlay.onToggleCollapse = { [weak self] in self?.toggleCollapsed() }
 
         contentView = container
 
-        // 存的是窗口 frame，但 init 收的是 contentRect，两者差一个标题栏高度。
-        // 这里再按 frame 摆一次，否则每次启动都会往下掉一截。
+        // What is saved is the window frame, but init takes a content rect — they differ
+        // by the title bar height. Re-apply it here or the window creeps down on every
+        // launch.
         restoreSavedFrame()
 
-        installUserScript()
-        installMessageTracking()
+        listView.restore(HistoryStore.shared.all)
+        updatePlaceholder()
         bindPreferences()
+        bindRuntime()
         startHoverTracking()
-        reload()
     }
 
     private func bindPreferences() {
@@ -141,268 +111,64 @@ final class HUDWindow: NSWindow {
             .sink { [weak self] on in self?.level = on ? Self.overlayLevel : .normal }
             .store(in: &cancellables)
 
-
         prefs.$authCode
-            .dropFirst()
-            .sink { [weak self] _ in self?.reload() }
+            .sink { [weak self] _ in self?.updatePlaceholder() }
             .store(in: &cancellables)
-
-        runtime.$relayState
-            .removeDuplicates()
-            .sink { [weak self] _ in self?.reload() }
-            .store(in: &cancellables)
-
-        prefs.$customCSS
-            .dropFirst()
-            .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
-            .sink { [weak self] _ in self?.injectCSS() }
-            .store(in: &cancellables)
-
-        // 字号 / 用户名清晰度 / 衬底浓度，拖滑杆要立刻看到变化（头像跟字号联动）
-        Publishers.CombineLatest3(
-            prefs.$fontSize, prefs.$nameOpacity, prefs.$backdropAlpha
-        )
-        .dropFirst()
-        .debounce(for: .milliseconds(80), scheduler: RunLoop.main)
-        .sink { [weak self] _, _, _ in self?.injectCSS() }
-        .store(in: &cancellables)
 
         prefs.$showOutline
             .sink { [weak self] on in self?.dragOverlay?.showsOutline = on }
             .store(in: &cancellables)
 
-        // 调试消息开关写在 URL 参数里，改了得重新载入
-        prefs.$showDebugMessages
+        // Font size, name clarity, backdrop weight and the preset all feed the same
+        // style; coalesce them so dragging a slider redraws once per frame, not per event.
+        Publishers.CombineLatest4(
+            prefs.$fontSize, prefs.$nameOpacity, prefs.$backdropAlpha, prefs.$presetID
+        )
+        .dropFirst()
+        .debounce(for: .milliseconds(40), scheduler: RunLoop.main)
+        .sink { [weak self] _, _, _, _ in self?.listView.style = .current() }
+        .store(in: &cancellables)
+    }
+
+    private func bindRuntime() {
+        runtime.messages
+            .sink { [weak self] message in self?.receive(message) }
+            .store(in: &cancellables)
+
+        runtime.$connectionState
+            .removeDuplicates()
             .dropFirst()
-            .sink { [weak self] _ in self?.reload() }
+            .sink { [weak self] state in
+                guard let self, self.prefs.showDebugMessages else { return }
+                self.listView.appendStatus(state.label)
+            }
             .store(in: &cancellables)
     }
 
+    private func receive(_ message: DanmakuMessage) {
+        listView.append(message)
+        if message.isWorthKeeping {
+            HistoryStore.shared.append(message)
+        }
+    }
+
+    private func updatePlaceholder() {
+        listView.emptyText = prefs.authCode.isEmpty
+            ? "还没设置身份码\n菜单栏图标 → 设置"
+            : "弹幕会出现在这里"
+    }
+
+    /// Menu item "重新加载": start from a clean feed with the saved history back in place.
     func reload() {
-        guard !prefs.authCode.isEmpty else {
-            webView.loadHTMLString(Self.placeholderHTML, baseURL: nil)
-            return
-        }
-        if case .failed = runtime.relayState {
-            webView.loadHTMLString(Self.relayFailedHTML, baseURL: nil)
-            return
-        }
-        guard runtime.relayState == .ready, let url = runtime.hudURL else {
-            webView.loadHTMLString(Self.startingHTML, baseURL: nil)
-            return
-        }
-        webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        listView.clear()
+        listView.restore(HistoryStore.shared.all)
+        updatePlaceholder()
     }
 
-    /// 把 CSS 塞进一个 JS 字符串字面量。用 JSON 编码最保险，
-    /// 免得 CSS 里的引号、反斜杠把脚本弄坏。
-    private var cssInjectionJS: String {
-        // 滑杆的值写在样式表后面，这样能覆盖 CSS 里的默认变量
-        let combined = prefs.customCSS + "\n\n/* 设置面板 */\n" + prefs.variableCSS
-        let literal = (try? JSONSerialization.data(withJSONObject: [combined]))
-            .flatMap { String(data: $0, encoding: .utf8) }
-            .map { String($0.dropFirst().dropLast()) } ?? "\"\""
-        return """
-        (function () {
-          function apply() {
-            var head = document.head || document.documentElement;
-            if (!head) { return; }
-            var el = document.getElementById('danmu-hud-style');
-            if (!el) {
-              el = document.createElement('style');
-              el.id = 'danmu-hud-style';
-              head.appendChild(el);
-            }
-            el.textContent = \(literal);
-            // blivechat 是单页应用，重渲染时可能把 style 冲掉，兜一下
-            if (el.parentNode !== head) { head.appendChild(el); }
-          }
-          apply();
-          if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', apply);
-          }
-          setTimeout(apply, 500);
-          setTimeout(apply, 1500);
-        })();
-        """
-    }
+    // MARK: - Hover
 
-    /// 让页面定期上报每条弹幕的位置和作者。
-    /// 有了这些矩形，才能判断鼠标是不是悬在弹幕上——窗口平时对鼠标隐形，
-    /// 只有悬在弹幕上时才临时接收事件，这样右键回复和「不挡路」能同时成立。
-    private func installMessageTracking() {
-        let controller = webView.configuration.userContentController
-        controller.removeScriptMessageHandler(forName: "danmuRects")
-        controller.add(MessageRectBridge(window: self), name: "danmuRects")
-        controller.removeScriptMessageHandler(forName: "danmuHistory")
-        controller.add(HistoryBridge(), name: "danmuHistory")
-        installUserScript()
-    }
-
-    private var messageTrackingJS: String {
-        """
-        (function () {
-          function report() {
-            try {
-              var nodes = document.querySelectorAll(
-                'yt-live-chat-text-message-renderer, yt-live-chat-paid-message-renderer'
-              );
-              var out = [];
-              for (var i = 0; i < nodes.length; i++) {
-                var r = nodes[i].getBoundingClientRect();
-                if (r.height <= 0 || r.bottom < 0 || r.top > window.innerHeight) { continue; }
-                var nameEl = nodes[i].querySelector('#author-name');
-                out.push({
-                  x: r.left, y: r.top, w: r.width, h: r.height,
-                  name: nameEl ? nameEl.textContent.trim() : ''
-                });
-              }
-              window.webkit.messageHandlers.danmuRects.postMessage({
-                items: out, viewportHeight: window.innerHeight
-              });
-            } catch (e) {}
-          }
-          setInterval(report, 250);
-          report();
-
-          // 新来的消息存一份，下次启动铺回去。带 data-history 的是上次铺回来的，
-          // 别再上报一遍，否则历史会自我复制越滚越多。
-          var seen = new WeakSet();
-          function reportNew() {
-            try {
-              // 限定在真容器内取，且排除铺回来的历史，否则历史会自我复制。
-              // 之前没限定范围，把带 id="items" 的节点也存了进去，导致页面上
-              // 出现两个 #items，后续所有查询全部命中假货。
-              var scope = document.querySelector('#item-offset #items');
-              if (!scope) { return; }
-              var nodes = scope.querySelectorAll(
-                'yt-live-chat-text-message-renderer:not([data-history]),'
-                + 'yt-live-chat-paid-message-renderer:not([data-history])'
-              );
-              for (var i = 0; i < nodes.length; i++) {
-                if (seen.has(nodes[i])) { continue; }
-                seen.add(nodes[i]);
-                var clone = nodes[i].cloneNode(true);
-                // id 会和页面上的元素撞车（尤其 #items / #item-offset），
-                // 存之前一律剥掉
-                clone.removeAttribute('id');
-                var withId = clone.querySelectorAll('[id]');
-                for (var k = 0; k < withId.length; k++) {
-                  var keep = withId[k].id;
-                  if (keep === 'items' || keep === 'item-offset' || keep === 'item-scroller') {
-                    withId[k].removeAttribute('id');
-                  }
-                }
-                window.webkit.messageHandlers.danmuHistory.postMessage(clone.outerHTML);
-              }
-            } catch (e) {}
-          }
-          setInterval(reportNew, 500);
-        })();
-        """
-    }
-
-    /// 新消息到达时自动滚到底。
-    ///
-    /// blivechat 自己有这套逻辑，但它按 #items 的高度判断该不该滚，而我们插入的
-    /// 历史容器是 #items 的兄弟节点，改变了滚动容器的真实高度，它就算不准了。
-    ///
-    /// 这段必须独立于历史存在与否——之前把它挂在历史容器上，没有历史时就完全失效。
-    private func installAutoFollow() {
-        let js = """
-        (function () {
-          var sc = document.querySelector('#item-scroller');
-          var items = document.querySelector('#item-offset #items');
-          if (!sc || !items) { return 'no-target'; }
-          if (sc.__blcFollow) { return 'already'; }
-          sc.__blcFollow = true;
-
-          var following = true;
-          function atBottom() {
-            return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
-          }
-          // 只有用户自己动滚轮或按键才可能退出跟随。程序滚动也会触发 scroll
-          // 事件，拿它判断会把自己的滚动误当成用户在往上翻。
-          function onUserIntent() {
-            setTimeout(function () { following = atBottom(); }, 60);
-          }
-          sc.addEventListener('wheel', onUserIntent, { passive: true });
-          sc.addEventListener('keydown', onUserIntent);
-
-          function follow() {
-            if (!following) { return; }
-            sc.scrollTop = sc.scrollHeight;
-          }
-          new MutationObserver(function () {
-            follow();
-            // 表情图加载完会再撑高一次，补一脚
-            setTimeout(follow, 120);
-          }).observe(items, { childList: true, subtree: true, characterData: true });
-
-          follow();
-          return 'installed';
-        })();
-        """
-        webView.evaluateJavaScript(js) { result, error in
-            Log.write("installAutoFollow -> \(result ?? "nil") error=\(error?.localizedDescription ?? "none")")
-        }
-    }
-
-    /// 把上次存下来的弹幕铺回窗口，免得冷启动时一片空白
-    private func restoreHistory() {
-        let items = HistoryStore.shared.all
-        guard !items.isEmpty,
-              let data = try? JSONSerialization.data(withJSONObject: items),
-              let literal = String(data: data, encoding: .utf8) else { return }
-
-        // 页面初始化会清空消息区，插进去的历史转眼就没了。
-        // 所以插完还要盯着：被清掉就重新插回来，直到有真弹幕进来为止。
-        let js = """
-        (function () {
-          try {
-            function build() {
-              var host = document.createElement('div');
-              host.id = 'blc-history';
-              host.innerHTML = \(literal).join('');
-              for (var i = 0; i < host.children.length; i++) {
-                host.children[i].setAttribute('data-history', '1');
-              }
-              return host;
-            }
-
-            // #items 的高度由 blivechat 用 JS 控着（滚动动画要用），
-            // 塞进去的内容撑不开它，整块就塌成 0 高。
-            // 插到滚动容器里、它管辖的 #item-offset 之前，才能正常占位。
-            function place() {
-              var sc = document.querySelector('#item-scroller');
-              var offset = document.querySelector('#item-offset');
-              var liveItems = document.querySelector('#item-offset #items');
-              if (!sc || !offset || !liveItems) { return; }
-
-              var placed = false;
-              if (!document.getElementById('blc-history')) {
-                sc.insertBefore(build(), offset);
-                placed = true;
-              }
-
-              if (placed) { sc.scrollTop = sc.scrollHeight; }
-            }
-
-            place();
-
-            // 页面把它抹掉就再放一次，最多补 20 次，避免无限打架
-            var tries = 0;
-            var guard = setInterval(function () {
-              if (tries++ > 20) { clearInterval(guard); return; }
-              place();
-            }, 400);
-          } catch (e) {}
-        })();
-        """
-        webView.evaluateJavaScript(js, completionHandler: nil)
-    }
-
-    /// 轮询鼠标位置。用轮询而不是全局事件监听，是为了不碰辅助功能权限。
+    /// Polls the pointer instead of installing a global event monitor, so the app never
+    /// has to ask for accessibility permission.
     private func startHoverTracking() {
         let timer = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateHover() }
@@ -418,7 +184,7 @@ final class HUDWindow: NSWindow {
         guard frame.contains(screenPoint) else {
             dragOverlay?.mouseInside = false
             dragOverlay?.hoveringCollapseButton = false
-            applyHover(nil)
+            applyHover(row: nil)
             return
         }
 
@@ -427,26 +193,32 @@ final class HUDWindow: NSWindow {
         dragOverlay?.hoveringCollapseButton =
             dragOverlay?.collapseButtonRect.contains(local) ?? false
 
-        let hit = isCollapsed ? nil : messageHits.first { $0.rect.contains(local) }
-        applyHover(hit?.author)
+        applyHover(row: isCollapsed ? nil : listView.row(atWindowPoint: local))
         refreshMouseTransparency()
     }
 
-    private func applyHover(_ author: String?) {
-        guard hoveringAuthor != author else { return }
-        hoveringAuthor = author
-        dragOverlay?.hoveredAuthor = author
+    private func applyHover(row: DanmakuRow?) {
+        hoveringRow = row != nil
+        guard hoveringAuthor != row?.author else { return }
+        hoveringAuthor = row?.author
+        dragOverlay?.hoveredAuthor = hoveringAuthor
         refreshMouseTransparency()
     }
 
-    /// 窗口只在「鼠标压着弹幕」或「鼠标在收起按钮上」时接事件，
-    /// 其余时候一律隐形，免得整片透明区域挡住后面的窗口。
+    /// The window only accepts events while the pointer is over a row or the collapse
+    /// button; otherwise the whole transparent rectangle would block what is behind it.
     private func refreshMouseTransparency() {
         guard !isEditingLayout else { return }
-        ignoresMouseEvents = hoveringAuthor == nil && !(dragOverlay?.hoveringCollapseButton ?? false)
+        ignoresMouseEvents = !hoveringRow && !(dragOverlay?.hoveringCollapseButton ?? false)
     }
 
-    // MARK: - 收起 / 展开
+    private func reply(to author: String) {
+        guard !author.isEmpty else { return }
+        ComposerModel.shared.prepareReply(to: author)
+        (NSApp.delegate as? AppDelegate)?.openComposer()
+    }
+
+    // MARK: - Collapse
 
     private(set) var isCollapsed = false
     private var expandedHeight: CGFloat = 0
@@ -463,7 +235,8 @@ final class HUDWindow: NSWindow {
         } else {
             expandedHeight = frame.height
             let top = frame.maxY
-            // 收起后只留顶部那条，位置按上边缘对齐，看着才像「收上去了」
+            // Collapsed, only the top strip remains; align to the top edge so it reads as
+            // having folded upwards.
             setFrame(
                 NSRect(x: frame.minX, y: top - Self.collapsedHeight,
                        width: frame.width, height: Self.collapsedHeight),
@@ -471,64 +244,36 @@ final class HUDWindow: NSWindow {
             )
             isCollapsed = true
         }
-        // 收起就彻底藏干净，别露半条弹幕在外面
-        webView.isHidden = isCollapsed
+        listView.isHidden = isCollapsed
         dragOverlay?.isCollapsed = isCollapsed
         dragOverlay?.needsDisplay = true
     }
 
     static let collapsedHeight: CGFloat = 34
 
-    /// 右键弹幕时用的
-    fileprivate func replyToHovered() {
-        guard let author = hoveringAuthor, !author.isEmpty else { return }
-        ComposerModel.shared.prepareReply(to: author)
-        (NSApp.delegate as? AppDelegate)?.openComposer()
-    }
-
-    /// 页面一加载就自动注入，比等 didFinish 再 evaluate 可靠得多。
-    /// 注意 removeAllUserScripts 是一刀切的，所以每次重装都得把弹幕位置上报
-    /// 那段一起加回去——之前漏了这条，右键回复一直没反应就是因为它被清掉了。
-    private func installUserScript() {
-        let controller = webView.configuration.userContentController
-        controller.removeAllUserScripts()
-        for source in [cssInjectionJS, messageTrackingJS] {
-            controller.addUserScript(WKUserScript(
-                source: source,
-                injectionTime: .atDocumentEnd,
-                forMainFrameOnly: true
-            ))
-        }
-    }
-
-    fileprivate func injectCSS() {
-        installUserScript()
-        webView.evaluateJavaScript(cssInjectionJS) { _, error in
-            if let error {
-                NSLog("[Namonaki] CSS 注入失败: \(error.localizedDescription)")
-            }
-        }
-    }
+    // MARK: - Frame
 
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
         super.setFrame(frameRect, display: flag)
-        // 存系统最终采用的 frame，不是我们请求的那个，否则重启后位置对不上
+        // Save the frame the system settled on, not the one we asked for, or the position
+        // will not match after a restart.
         prefs.saveFrame(frame)
     }
 
-    /// 系统默认把窗口限制在屏幕可用区域内（菜单栏以下、边缘以内），
-    /// 弹幕窗想拉到整屏高就会被卡住。这里直接放行。
+    /// The system normally keeps windows inside the usable screen area (below the menu
+    /// bar, inside the edges), which stops the HUD from filling the screen height.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect
     }
 
-    /// 比菜单栏（.mainMenu）高一级，否则内置屏上窗口顶边会被系统按在菜单栏下面，
-    /// 副屏没有菜单栏所以感觉不到这个限制。
+    /// One level above the menu bar, otherwise the built-in display pins the window's top
+    /// edge below it. External displays have no menu bar, which is why the limit is
+    /// invisible there.
     static let overlayLevel = NSWindow.Level(
         rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 1
     )
 
-    /// 按保存的 frame 复位；窗口要是跑到屏幕外面了就拉回可见区域。
+    /// Restore the saved frame, pulling the window back on screen if it ended up outside.
     private func restoreSavedFrame() {
         guard let saved = prefs.savedFrame, saved.width > 0, saved.height > 0 else { return }
 
@@ -549,12 +294,10 @@ final class HUDWindow: NSWindow {
         }
     }
 
-    /// 把当前位置和大小收藏起来
     func rememberSpot() {
         prefs.bookmarkFrame = NSStringFromRect(frame)
     }
 
-    /// 回到收藏的位置
     func recallSpot() {
         guard !prefs.bookmarkFrame.isEmpty else { return }
         let target = NSRectFromString(prefs.bookmarkFrame)
@@ -563,13 +306,14 @@ final class HUDWindow: NSWindow {
         orderFrontRegardless()
     }
 
-    /// 直接按数字摆放，设置面板里手填坐标用
+    /// Place the window by numbers, for the coordinate fields in settings.
     func applyFrame(x: Double, y: Double, width: Double, height: Double) {
         setFrame(NSRect(x: x, y: y, width: max(width, 120), height: max(height, 80)), display: true)
         orderFrontRegardless()
     }
 
-    /// 把窗口拉回主屏中间，尺寸也复位——窗口找不着了的时候用
+    /// Back to the middle of the main screen at the default size — for when the window
+    /// has gone missing.
     func resetPosition() {
         let bounds = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero
         let size = NSSize(width: 380, height: min(620, bounds.height))
@@ -582,11 +326,11 @@ final class HUDWindow: NSWindow {
         )
     }
 
-    /// 铺满当前所在屏幕的高度。用 frame 而不是 visibleFrame，
-    /// 这样才包括菜单栏和 Dock 占的那部分。
+    /// Fill the height of the current screen. Uses `frame`, not `visibleFrame`, so it
+    /// covers the menu bar and Dock strips too.
     func fillScreenHeight() {
-        // 先用窗口中心点锁定目标屏幕，别在改 frame 的过程中让系统重新判断，
-        // 否则跨屏边缘时 x 会来回跳。
+        // Pick the target screen from the window's centre first; letting the system
+        // re-decide mid-resize makes x jump back and forth at screen edges.
         let center = NSPoint(x: frame.midX, y: frame.midY)
         guard let target = NSScreen.screens.first(where: { $0.frame.contains(center) })
                 ?? screen ?? NSScreen.main else { return }
@@ -608,105 +352,21 @@ final class HUDWindow: NSWindow {
     }
 
     override var canBecomeKey: Bool { true }
-
-    private static let placeholderHTML = """
-    <html><body style="margin:0;background:transparent;
-      font:15px/1.6 -apple-system,'PingFang SC',sans-serif;
-      color:rgba(255,255,255,0.6);display:flex;align-items:center;
-      justify-content:center;height:100vh;text-align:center;
-      text-shadow:0 1px 3px rgba(0,0,0,0.6)">
-      还没设置身份码<br>菜单栏图标 → 设置
-    </body></html>
-    """
-
-    private static let startingHTML = """
-    <html><body style="margin:0;background:transparent;
-      font:15px/1.6 -apple-system,'PingFang SC',sans-serif;
-      color:rgba(255,255,255,0.6);display:flex;align-items:center;
-      justify-content:center;height:100vh;text-align:center;
-      text-shadow:0 1px 3px rgba(0,0,0,0.6)">
-      本机弹幕页正在启动…
-    </body></html>
-    """
-
-    private static let relayFailedHTML = """
-    <html><body style="margin:0;background:transparent;
-      font:15px/1.6 -apple-system,'PingFang SC',sans-serif;
-      color:rgba(255,255,255,0.7);display:flex;align-items:center;
-      justify-content:center;height:100vh;text-align:center;
-      text-shadow:0 1px 3px rgba(0,0,0,0.6)">
-      本机转发启动失败<br>请检查 12451 端口后重启 App
-    </body></html>
-    """
 }
 
-extension HUDWindow: WKNavigationDelegate {
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        injectCSS()
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        injectCSS()
-        // 页面刚渲染完 #items 可能还没挂上，稍等一下再铺历史
-        Task {
-            try? await Task.sleep(for: .milliseconds(600))
-            self.restoreHistory()
-            self.installAutoFollow()
-        }
-    }
-}
-
-/// 收下新弹幕的 HTML，存进历史
-private final class HistoryBridge: NSObject, WKScriptMessageHandler {
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let html = message.body as? String else { return }
-        Task { @MainActor in
-            HistoryStore.shared.append(html)
-        }
-    }
-}
-
-/// 把 JS 上报的弹幕矩形转成 AppKit 坐标存起来。
-/// 网页坐标原点在左上，NSView 在左下，得翻一下 y。
-private final class MessageRectBridge: NSObject, WKScriptMessageHandler {
-    private weak var window: HUDWindow?
-
-    init(window: HUDWindow) {
-        self.window = window
-    }
-
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let payload = message.body as? [String: Any],
-              let items = payload["items"] as? [[String: Any]],
-              let viewportHeight = payload["viewportHeight"] as? Double else { return }
-
-        let hits = items.compactMap { item -> HUDWindow.MessageHit? in
-            guard let x = item["x"] as? Double, let y = item["y"] as? Double,
-                  let w = item["w"] as? Double, let h = item["h"] as? Double else { return nil }
-            return HUDWindow.MessageHit(
-                rect: NSRect(x: x, y: viewportHeight - y - h, width: w, height: h),
-                author: item["name"] as? String ?? ""
-            )
-        }
-
-        Task { @MainActor in
-            self.window?.messageHits = hits
-        }
-    }
-}
-
-/// 透明拖动层：按住任意位置都能挪窗口，滚轮转发给底下的 WebView。
-/// 编辑布局时还会画一圈边框，让人看清窗口到底占多大。
+/// Transparent drag layer: the window moves from anywhere in it, and the scroll wheel is
+/// forwarded to the feed underneath. While editing the layout it also draws a border so
+/// the window's real bounds are visible.
 private final class DragOverlay: NSView {
     weak var forwardTarget: NSView?
 
     var isEditing = false
-    /// 鼠标底下那条弹幕的作者，非空时这层才接管点击
+    /// Author of the row under the pointer; this layer only takes clicks while set.
     var hoveredAuthor: String? {
         didSet { needsDisplay = true }
     }
 
-    /// 鼠标在窗口里才显示收起按钮，平时不打扰画面
+    /// The collapse button only appears while the pointer is inside the window.
     var mouseInside = false {
         didSet { if oldValue != mouseInside { needsDisplay = true } }
     }
@@ -716,7 +376,6 @@ private final class DragOverlay: NSView {
     var isCollapsed = false
     var onToggleCollapse: (() -> Void)?
 
-    /// 收起按钮固定在右上角
     var collapseButtonRect: NSRect {
         NSRect(x: bounds.maxX - 32, y: bounds.maxY - 28, width: 24, height: 24)
     }
@@ -725,7 +384,8 @@ private final class DragOverlay: NSView {
         didSet { needsDisplay = true }
     }
 
-    /// 常驻的淡边框。没弹幕时窗口全透明，不画点东西根本找不着它在哪。
+    /// A permanent faint outline. With no messages the window is fully transparent and
+    /// there is nothing to aim at.
     var showsOutline = false {
         didSet { needsDisplay = true }
     }
@@ -740,13 +400,12 @@ private final class DragOverlay: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // 收起按钮要能点到
         let local = convert(point, from: superview)
         if (mouseInside || isCollapsed), collapseButtonRect.contains(local) {
             return self
         }
-        // 其余时候只有编辑模式才接管：左键要留给网页选中复制文字，
-        // 回复走 WebView 的右键菜单。
+        // Otherwise only editing mode takes over: left click belongs to text selection,
+        // and replying happens through the row's right-click menu.
         return isEditing ? super.hitTest(point) : nil
     }
 
@@ -754,8 +413,8 @@ private final class DragOverlay: NSView {
         forwardTarget?.scrollWheel(with: event)
     }
 
-    /// 右上角的收起/展开按钮。只在鼠标进窗口时浮现，收起状态下常驻，
-    /// 不然收起后就再也找不到它了。
+    /// Collapse/expand button in the top-right corner. Only visible while the pointer is
+    /// inside, except when collapsed — otherwise there would be no way to get it back.
     private func drawCollapseButton() {
         guard mouseInside || isCollapsed else { return }
 
@@ -764,7 +423,6 @@ private final class DragOverlay: NSView {
         NSColor.black.withAlphaComponent(hoveringCollapseButton ? 0.68 : 0.42).setFill()
         bg.fill()
 
-        // 一个朝上或朝下的箭头
         let arrow = NSBezierPath()
         let mid = NSPoint(x: rect.midX, y: rect.midY)
         let w: CGFloat = 5, h: CGFloat = 3
@@ -797,14 +455,14 @@ private final class DragOverlay: NSView {
             return
         }
 
-        // 只描边不铺色，免得整块蓝把弹幕盖住
+        // Stroke only — a filled tint would hide the danmaku underneath.
         let inset = bounds.insetBy(dx: 1, dy: 1)
         let border = NSBezierPath(roundedRect: inset, xRadius: 6, yRadius: 6)
         border.lineWidth = 2
         NSColor.controlAccentColor.withAlphaComponent(0.9).setStroke()
         border.stroke()
 
-        // 右下角的抓手，提示这里可以拖着缩放
+        // Grip in the bottom-right corner, hinting that this is where you resize.
         let grip = NSRect(x: bounds.maxX - 16, y: bounds.minY + 4, width: 12, height: 12)
         NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: grip, xRadius: 2, yRadius: 2).fill()
@@ -812,7 +470,6 @@ private final class DragOverlay: NSView {
         drawHint()
     }
 
-    /// 顶部那条「拖动调整 · 按 Esc 完成」的提示
     private func drawHint() {
         let text = "拖动调整 · 按 Esc 完成"
         let attrs: [NSAttributedString.Key: Any] = [

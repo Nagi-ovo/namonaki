@@ -171,7 +171,7 @@ enum OpenLivePacketCodec {
 }
 
 enum MappedOpenLiveEvent: Equatable, Sendable {
-    case broadcast(Data)
+    case message(DanmakuMessage)
     case sessionEnded(gameID: String)
 }
 
@@ -202,42 +202,66 @@ enum OpenLiveEventMapper {
         case "LIVE_OPEN_PLATFORM_INTERACTION_END":
             return .sessionEnded(gameID: string(payload["game_id"]))
         case "LIVE_OPEN_PLATFORM_DM", "LIVE_OPEN_PLATFORM_DM_MIRROR":
-            return .broadcast(try encode(type: "text", data: textData(
+            return .message(.text(textMessage(
                 payload,
                 ownerOpenID: ownerOpenID,
                 isMirror: commandName.hasSuffix("_MIRROR")
             )))
         case "LIVE_OPEN_PLATFORM_SEND_GIFT":
-            return .broadcast(try encode(type: "gift", data: giftData(payload)))
+            return .message(.gift(giftMessage(payload)))
         case "LIVE_OPEN_PLATFORM_GUARD":
-            return .broadcast(try encode(type: "member", data: memberData(payload)))
+            return .message(.member(memberMessage(payload)))
         case "LIVE_OPEN_PLATFORM_SUPER_CHAT":
-            return .broadcast(try encode(type: "superChat", data: superChatData(payload)))
+            return .message(.superChat(superChatMessage(payload)))
         case "LIVE_OPEN_PLATFORM_SUPER_CHAT_DEL":
             let ids = (payload["message_ids"] as? [Any] ?? []).map { string($0) }
-            return .broadcast(try encode(type: "deleteSuperChat", data: ["ids": ids]))
+            return .message(.deleteSuperChat(ids: ids))
         default:
             return nil
         }
     }
 
+    /// Connection status line. Only the OBS page consumes this; the HUD reads
+    /// `OpenLiveRuntime.connectionState` directly.
     static func debug(_ content: String) -> Data {
-        (try? encode(type: "debug", data: ["content": content])) ?? Data()
+        (try? JSONSerialization.data(withJSONObject: [
+            "type": "debug",
+            "data": ["content": content],
+        ])) ?? Data()
     }
 
-    private static func textData(
+    /// A fan medal only counts when the viewer is actually wearing it.
+    private static func author(
+        _ data: [String: Any],
+        name: Any?,
+        avatar: Any?,
+        openID: Any?,
+        type: Int = 0
+    ) -> DanmakuAuthor {
+        let wearing = bool(data["fans_medal_wearing_status"])
+        return DanmakuAuthor(
+            name: string(name),
+            avatarURL: secureURL(avatar),
+            uid: string(openID),
+            type: type,
+            privilegeType: int(data["guard_level"]),
+            medalName: wearing ? string(data["fans_medal_name"]) : "",
+            medalLevel: wearing ? int(data["fans_medal_level"]) : 0
+        )
+    }
+
+    private static func textMessage(
         _ data: [String: Any],
         ownerOpenID: String,
         isMirror: Bool
-    ) -> [String: Any] {
+    ) -> DanmakuMessage.Text {
         let openID = string(data["open_id"])
-        let guardLevel = int(data["guard_level"])
         let authorType: Int
         if !ownerOpenID.isEmpty && openID == ownerOpenID {
             authorType = 3
         } else if bool(data["is_admin"]) {
             authorType = 2
-        } else if guardLevel != 0 {
+        } else if int(data["guard_level"]) != 0 {
             authorType = 1
         } else {
             authorType = 0
@@ -245,93 +269,75 @@ enum OpenLiveEventMapper {
 
         let message = string(data["msg"])
         let replyName = string(data["reply_uname"])
-        let content = replyName.isEmpty ? message : "@\(replyName) \(message)"
-        var result: [String: Any] = [
-            "avatarUrl": secureURL(data["uface"]),
-            "timestamp": int(data["timestamp"]),
-            "authorName": string(data["uname"]),
-            "authorType": authorType,
-            "content": content,
-            "privilegeType": guardLevel,
-            "isGiftDanmaku": false,
-            "medalLevel": bool(data["fans_medal_wearing_status"])
-                ? int(data["fans_medal_level"]) : 0,
-            "id": string(data["msg_id"]),
-            "isMirror": isMirror,
-            "uid": openID,
-            "medalName": bool(data["fans_medal_wearing_status"])
-                ? string(data["fans_medal_name"]) : "",
-        ]
-        if int(data["dm_type"]) == 1 {
-            let emoticon = secureURL(data["emoji_img_url"])
-            if !emoticon.isEmpty {
-                result["emoticon"] = emoticon
-            }
-        }
-        return result
+        let emoticon = int(data["dm_type"]) == 1 ? secureURL(data["emoji_img_url"]) : ""
+
+        return DanmakuMessage.Text(
+            id: string(data["msg_id"]),
+            timestamp: int(data["timestamp"]),
+            author: author(
+                data,
+                name: data["uname"],
+                avatar: data["uface"],
+                openID: openID,
+                type: authorType
+            ),
+            content: replyName.isEmpty ? message : "@\(replyName) \(message)",
+            emoticonURL: emoticon.isEmpty ? nil : emoticon,
+            isMirror: isMirror
+        )
     }
 
-    private static func giftData(_ data: [String: Any]) -> [String: Any] {
+    private static func giftMessage(_ data: [String: Any]) -> DanmakuMessage.Gift {
         let value = int(data["r_price"]) * int(data["gift_num"])
         let isPaid = bool(data["paid"])
-        return [
-            "id": string(data["msg_id"]),
-            "avatarUrl": secureURL(data["uface"]),
-            "timestamp": int(data["timestamp"]),
-            "authorName": string(data["uname"]),
-            "totalCoin": isPaid ? value : 0,
-            "totalFreeCoin": isPaid ? 0 : value,
-            "giftName": string(data["gift_name"]),
-            "num": int(data["gift_num"]),
-            "giftId": int(data["gift_id"]),
-            "giftIconUrl": secureURL(data["gift_icon"]),
-            "uid": string(data["open_id"]),
-            "privilegeType": int(data["guard_level"]),
-            "medalLevel": bool(data["fans_medal_wearing_status"])
-                ? int(data["fans_medal_level"]) : 0,
-            "medalName": bool(data["fans_medal_wearing_status"])
-                ? string(data["fans_medal_name"]) : "",
-        ]
+        return DanmakuMessage.Gift(
+            id: string(data["msg_id"]),
+            timestamp: int(data["timestamp"]),
+            author: author(
+                data,
+                name: data["uname"],
+                avatar: data["uface"],
+                openID: data["open_id"]
+            ),
+            giftID: int(data["gift_id"]),
+            giftName: string(data["gift_name"]),
+            giftIconURL: secureURL(data["gift_icon"]),
+            num: int(data["gift_num"]),
+            totalCoin: isPaid ? value : 0,
+            totalFreeCoin: isPaid ? 0 : value
+        )
     }
 
-    private static func memberData(_ data: [String: Any]) -> [String: Any] {
+    private static func memberMessage(_ data: [String: Any]) -> DanmakuMessage.Member {
         let user = data["user_info"] as? [String: Any] ?? [:]
-        return [
-            "id": string(data["msg_id"]),
-            "avatarUrl": secureURL(user["uface"]),
-            "timestamp": int(data["timestamp"]),
-            "authorName": string(user["uname"]),
-            "privilegeType": int(data["guard_level"]),
-            "num": int(data["guard_num"]),
-            "unit": string(data["guard_unit"]),
-            "total_coin": int(data["price"]) * int(data["guard_num"]),
-            "uid": string(user["open_id"]),
-            "medalLevel": bool(data["fans_medal_wearing_status"])
-                ? int(data["fans_medal_level"]) : 0,
-            "medalName": bool(data["fans_medal_wearing_status"])
-                ? string(data["fans_medal_name"]) : "",
-        ]
+        return DanmakuMessage.Member(
+            id: string(data["msg_id"]),
+            timestamp: int(data["timestamp"]),
+            author: author(
+                data,
+                name: user["uname"],
+                avatar: user["uface"],
+                openID: user["open_id"]
+            ),
+            num: int(data["guard_num"]),
+            unit: string(data["guard_unit"]),
+            totalCoin: int(data["price"]) * int(data["guard_num"])
+        )
     }
 
-    private static func superChatData(_ data: [String: Any]) -> [String: Any] {
-        [
-            "id": string(data["message_id"]),
-            "avatarUrl": secureURL(data["uface"]),
-            "timestamp": int(data["start_time"]),
-            "authorName": string(data["uname"]),
-            "price": int(data["rmb"]),
-            "content": string(data["message"]),
-            "uid": string(data["open_id"]),
-            "privilegeType": int(data["guard_level"]),
-            "medalLevel": bool(data["fans_medal_wearing_status"])
-                ? int(data["fans_medal_level"]) : 0,
-            "medalName": bool(data["fans_medal_wearing_status"])
-                ? string(data["fans_medal_name"]) : "",
-        ]
-    }
-
-    private static func encode(type: String, data: [String: Any]) throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["type": type, "data": data])
+    private static func superChatMessage(_ data: [String: Any]) -> DanmakuMessage.SuperChat {
+        DanmakuMessage.SuperChat(
+            id: string(data["message_id"]),
+            timestamp: int(data["start_time"]),
+            author: author(
+                data,
+                name: data["uname"],
+                avatar: data["uface"],
+                openID: data["open_id"]
+            ),
+            content: string(data["message"]),
+            price: int(data["rmb"])
+        )
     }
 
     private static func string(_ value: Any?) -> String {

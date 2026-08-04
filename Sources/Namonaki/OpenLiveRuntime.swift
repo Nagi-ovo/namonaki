@@ -33,6 +33,10 @@ final class OpenLiveRuntime: ObservableObject {
     @Published private(set) var connectionState: ConnectionState = .idle
     @Published private(set) var relayState: LocalRelayServer.State = .stopped
 
+    /// Every message received. The HUD subscribes here and renders natively instead of
+    /// looping back through the local relay.
+    let messages = PassthroughSubject<DanmakuMessage, Never>()
+
     let relayToken: String
     let rendererRoot: URL
 
@@ -241,8 +245,10 @@ final class OpenLiveRuntime: ObservableObject {
                         ownerOpenID: active.ownerOpenID
                     ) else { continue }
                     switch mapped {
-                    case .broadcast(let payload):
-                        relay.broadcast(payload)
+                    case .message(let message):
+                        // OBS gets blivechat-shaped JSON; the HUD takes the typed value.
+                        relay.broadcast(message.relayPayload)
+                        messages.send(message)
                     case .sessionEnded(let gameID):
                         if gameID == active.gameID {
                             sessionNeedsRefresh = true

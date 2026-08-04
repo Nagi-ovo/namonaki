@@ -1,10 +1,13 @@
 import Foundation
 
-/// 默认弹幕样式。这份 CSS 在 HUD 窗口和 OBS 浏览器源里通用，
-/// 改一处两边都变。设计取向是克制：无卡片、无描边徽章、无高饱和色，
-/// 只靠字重、透明度和一条细竖线拉开层次。
+/// Stylesheet for the OBS browser source. The desktop HUD is drawn natively and no
+/// longer reads this; `DanmakuStyle` is its counterpart and the two are kept in step by
+/// hand so both outputs look the same.
 ///
-/// 顶部几个 CSS 变量对应设置面板里的滑杆，滑杆会覆盖这里的默认值。
+/// The look is deliberately restrained: no cards, no outlined badges, no saturated
+/// colour — only weight, opacity and a thin rule separate the layers.
+///
+/// The variables at the top mirror the sliders in settings, which override them.
 enum DefaultStyle {
     static let css = """
     :root {

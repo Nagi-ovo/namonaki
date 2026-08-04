@@ -1,7 +1,13 @@
 # Namonaki
 
-macOS 菜单栏 app，在桌面上悬浮一个 B 站直播弹幕窗。AppKit 写窗口，内嵌 WKWebView
-加载本地 blivechat 的房间页，样式靠注入 CSS 控制。
+macOS 菜单栏 app，在桌面上悬浮一个 B 站直播弹幕窗。窗口和弹幕列表全是 AppKit 手画的，
+样式在 `DanmakuStyle.swift`。内置的 blivechat 渲染页只服务 OBS 浏览器源。
+
+数据流：`OpenLiveRuntime` 直连 B 站拿到消息 → `OpenLiveEventMapper` 映射成
+`DanmakuMessage` → HUD 订阅 `runtime.messages` 原生渲染，同时 `relayPayload`
+转成 blivechat 认识的 JSON 发给 `LocalRelayServer` 供 OBS 用。一条上游连接，两个出口。
+
+注释和 commit message 一律用英文。
 
 ## 跑起来
 
@@ -10,8 +16,8 @@ macOS 菜单栏 app，在桌面上悬浮一个 B 站直播弹幕窗。AppKit 写
 pkill -x Namonaki; open build/Namonaki.app    # 双击不会重启已在运行的实例，必须先杀
 ```
 
-不再依赖 Python / uv 进程。App 自己在 `127.0.0.1:12451` 提供内置渲染页
-和 WebSocket relay。`Resources/Renderer` 是随 app 打包的 blivechat 前端产物。
+不再依赖 Python / uv 进程。App 自己在 `127.0.0.1:12451` 提供渲染页和 WebSocket relay，
+**这条只给 OBS 用**，HUD 不经过它。`Resources/Renderer` 是随 app 打包的 blivechat 前端产物。
 
 只在修改 `../blivechat/frontend` 时用 **bun** 重建，不要用 npm：
 
@@ -26,7 +32,7 @@ rsync -a --delete dist/ ../../namonaki/Resources/Renderer/
 ## 踩过的坑
 
 **同一个身份码不能同时开多路直连。** `OpenLiveRuntime` 维护唯一上游，
-HUD 和 OBS 都从 `LocalRelayServer` 收消息。OBS 必须用设置页「复制 OBS 地址」生成的
+HUD 直接订阅它，OBS 从 `LocalRelayServer` 收。OBS 必须用设置页「复制 OBS 地址」生成的
 `127.0.0.1:12451` URL，不要再用旧 blivechat 房间 URL。切换过来前先停掉旧 Python
 blivechat，否则它残留的开放平台 session 仍会占名额。
 
@@ -54,14 +60,16 @@ Info.plist 里 `NSPrefersDisplaySafeAreaCompatibilityMode = false`（关掉刘�
 
 **blivechat 页面上有两个 `id="items"`**——`Ticker.vue`（顶部付费滚动条）一个，
 `ChatRenderer/index.vue`（真正的弹幕容器）一个，而 Ticker 在 DOM 顺序上排在前面。
-所以 `document.querySelector('#items')` 拿到的一直是 Ticker 那个。注入的 JS 和 CSS
-凡是要选弹幕容器，**必须写成 `#item-offset #items`**。blivechat 自己用 Vue 的 ref，
-不受影响，坏的只有我们注入的部分——这个坑一次报废了三轮修复。
+所以 `document.querySelector('#items')` 拿到的一直是 Ticker 那个，选弹幕容器
+**必须写成 `#item-offset #items`**。这个坑一次报废了三轮修复。现在 HUD 已经不碰
+DOM 了，只有 OBS 那份 CSS 还受影响。
 
-同理，存历史 HTML 前要把节点里的 `id` 剥掉，否则铺回页面后又制造一批同 id 元素。
+**滚动视图同样会吃掉鼠标事件**，窗口就拖不动。靠一层透明的 `DragOverlay` 接管拖动，
+滚轮再转发给列表。它的 `hitTest` 只在编辑模式返回自己。
 
-**WKWebView 会吃掉所有鼠标事件**，窗口就拖不动。靠一层透明的 `DragOverlay` 接管拖动，
-滚轮再转发回 WebView。它的 `hitTest` 只在编辑模式返回自己。
+**层里只要有一个 view 开了 `wantsLayer`，祖先全都变成 layer-backed**，
+`NSClipView` 会拿自己的 `backgroundColor` 画一层不透明底——空实现 `draw` 拦不住，
+得在 `updateLayer` 里把 `layer.backgroundColor` 清成 nil。窗口下半截莫名发白就是它。
 
 **macOS 不看像素透不透明**——窗口整个矩形都算它的地盘。所以非编辑模式一律
 `ignoresMouseEvents = true`，否则那一大片透明区域会挡住后面的东西。
@@ -96,11 +104,16 @@ WebView 扫码登录 → 取 Cookie 里的 `SESSDATA` / `bili_jct` → 存钥匙
 
 ## 样式
 
-`DefaultStyle.css` 是基础样式表，顶部几个 CSS 变量（字号 / 用户名不透明度 / 头像大小 /
-衬底浓度）由设置面板的滑杆覆盖。`StylePreset` 的三套预设共用这一份 CSS，只改变量和少量补丁。
+**两套，得手动对齐。** HUD 用 `DanmakuStyle.swift`（纯 Swift 常量），OBS 用
+`DefaultStyle.swift` 里那份 CSS。两边的取值是一比一抄过来的，改了一边记得改另一边。
 
-改了内置样式记得给 `Preferences.currentCSSVersion` +1，否则老用户存在 UserDefaults 里的
-旧 CSS 不会升级，新规则永远不生效。
+设置面板的三根滑杆（字号 / 用户名不透明度 / 衬底浓度）实时驱动 HUD；OBS 那边要靠
+「复制 OBS CSS」把样式表和滑杆取值一起粘进浏览器源。
 
-样式在 HUD 窗口和 OBS 浏览器源之间共用，设置面板有「复制给 OBS」。设计取向是克制：
-不用卡片、徽章色块、高饱和色，靠字重和透明度分层。
+改了 CSS 记得给 `Preferences.currentCSSVersion` +1，否则老用户存在 UserDefaults 里的
+旧 CSS 不会升级。注意这个升级会覆盖用户自己改过的 CSS，别为了小改动乱 +1。
+
+设计取向是克制：不用卡片、徽章色块、高饱和色，靠字重和透明度分层。
+
+想看渲染效果又不想开直播：
+`NAMONAKI_RENDER_PREVIEW=/tmp/preview.png swift test --filter rendersPreviewImageWhenAsked`

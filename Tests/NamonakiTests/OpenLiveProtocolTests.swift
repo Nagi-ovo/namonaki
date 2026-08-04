@@ -81,14 +81,15 @@ struct OpenLiveProtocolTests {
             ],
         ]
         let raw = try JSONSerialization.data(withJSONObject: command)
-        guard case .broadcast(let payload) = try OpenLiveEventMapper.map(
+        guard case .message(let message) = try OpenLiveEventMapper.map(
             raw,
             ownerOpenID: "owner-open-id"
         ) else {
-            Issue.record("弹幕没有映射成本机广播")
+            Issue.record("弹幕没有映射成本机消息")
             return
         }
 
+        let payload = message.relayPayload
         let object = try #require(
             JSONSerialization.jsonObject(with: payload) as? [String: Any]
         )
@@ -134,12 +135,12 @@ struct OpenLiveProtocolTests {
                 "cmd": commandName,
                 "data": data,
             ])
-            guard case .broadcast(let payload) = try OpenLiveEventMapper.map(raw, ownerOpenID: "") else {
+            guard case .message(let message) = try OpenLiveEventMapper.map(raw, ownerOpenID: "") else {
                 Issue.record("\(commandName) 没有被映射")
                 continue
             }
             let object = try #require(
-                JSONSerialization.jsonObject(with: payload) as? [String: Any]
+                JSONSerialization.jsonObject(with: message.relayPayload) as? [String: Any]
             )
             #expect(object["type"] as? String == expectedType)
         }

@@ -1,37 +1,41 @@
 import Foundation
 
-/// 最近若干条弹幕的缓存。开放平台接口不提供历史消息，
-/// 所以只能自己把收到的存下来，下次启动先铺回窗口里，免得开着一片空白。
+/// The last few messages received. The Open Live API serves no backlog, so the only way
+/// to open on something other than a blank window is to keep our own.
 ///
-/// 存的是渲染好的 HTML 片段，这样样式和实时消息完全一致，不用再拼一遍 DOM。
+/// The file is disposable by design: if it cannot be decoded (an older build wrote a
+/// different shape) it is dropped rather than migrated.
 @MainActor
 final class HistoryStore {
     static let shared = HistoryStore()
 
     private let limit = 40
-    private var items: [String]
+    private var items: [DanmakuMessage]
 
-    private static let file: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base
+    private static let directory: URL = {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Namonaki", isDirectory: true)
-            .appendingPathComponent("history.json")
     }()
 
+    private static let file = directory.appendingPathComponent("messages.json")
+    /// Rendered HTML fragments written by the WebView-based HUD.
+    private static let legacyFile = directory.appendingPathComponent("history.json")
+
     private init() {
+        try? FileManager.default.removeItem(at: Self.legacyFile)
         if let data = try? Data(contentsOf: Self.file),
-           let list = try? JSONSerialization.jsonObject(with: data) as? [String] {
+           let list = try? JSONDecoder().decode([DanmakuMessage].self, from: data) {
             items = list
         } else {
             items = []
         }
     }
 
-    var all: [String] { items }
+    var all: [DanmakuMessage] { items }
 
-    func append(_ html: String) {
-        guard !html.isEmpty else { return }
-        items.append(html)
+    func append(_ message: DanmakuMessage) {
+        items.append(message)
         if items.count > limit {
             items.removeFirst(items.count - limit)
         }
@@ -44,10 +48,10 @@ final class HistoryStore {
     }
 
     private func persist() {
-        let fm = FileManager.default
-        let dir = Self.file.deletingLastPathComponent()
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        guard let data = try? JSONSerialization.data(withJSONObject: items) else { return }
+        try? FileManager.default.createDirectory(
+            at: Self.directory, withIntermediateDirectories: true
+        )
+        guard let data = try? JSONEncoder().encode(items) else { return }
         try? data.write(to: Self.file, options: .atomic)
     }
 }

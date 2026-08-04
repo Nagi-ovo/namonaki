@@ -46,7 +46,7 @@ final class Preferences: ObservableObject {
     @Published var backdropAlpha: Double {
         didSet { defaults.set(backdropAlpha, forKey: Keys.backdropAlpha) }
     }
-    /// blivechat 的连接状态提示（Connecting / Disconnected 之类），默认不显示
+    /// Show connection status lines in the feed. Off by default.
     @Published var showDebugMessages: Bool {
         didSet { defaults.set(showDebugMessages, forKey: Keys.showDebugMessages) }
     }
@@ -55,7 +55,7 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(showOutline, forKey: Keys.showOutline) }
     }
 
-    /// 覆盖 CSS 里那几个变量的默认值，注入时拼在样式表后面
+    /// Slider values as CSS, appended after the stylesheet when copying it for OBS.
     var variableCSS: String {
         """
         :root {

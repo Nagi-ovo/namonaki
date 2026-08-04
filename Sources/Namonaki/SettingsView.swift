@@ -933,7 +933,7 @@ private final class StyleSettingsController: NSViewController, NSTextViewDelegat
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 440))
 
-        let title = AppKitUI.label("弹幕样式 CSS", size: 13, weight: .medium)
+        let title = AppKitUI.label("OBS 浏览器源 CSS", size: 13, weight: .medium)
         copyButton.title = "复制 OBS CSS"
         copyButton.controlSize = .small
         copyButton.target = self
@@ -963,7 +963,10 @@ private final class StyleSettingsController: NSViewController, NSTextViewDelegat
         textView.delegate = self
         scroll.documentView = textView
 
-        let help = settingDetail("改完自动生效。同一份粘进 OBS 浏览器源的「自定义 CSS」，两边就一模一样。")
+        let help = settingDetail(
+            "这份 CSS 只管 OBS 里那一份。桌面弹幕窗是原生绘制的，样式在「外观」里调。"
+                + "点「复制 OBS CSS」会连滑杆的取值一起复制，粘进浏览器源的「自定义 CSS」两边就一致。"
+        )
         let content = AppKitUI.stack([header, scroll, help], spacing: 10, alignment: .width)
         view.addSubview(content)
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -996,7 +999,12 @@ private final class StyleSettingsController: NSViewController, NSTextViewDelegat
 
     @objc private func copyCSS() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(prefs.customCSS, forType: .string)
+        // The sliders live outside the stylesheet, so append them or OBS would keep the
+        // built-in defaults while the HUD follows the sliders.
+        NSPasteboard.general.setString(
+            prefs.customCSS + "\n\n/* 设置面板 */\n" + prefs.variableCSS,
+            forType: .string
+        )
         copyButton.title = "已复制"
         copyTask?.cancel()
         copyTask = Task { [weak self] in
