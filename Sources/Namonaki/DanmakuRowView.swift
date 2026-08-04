@@ -41,43 +41,26 @@ class DanmakuRow: NSView {
     }
 }
 
-/// Label that keeps text selectable but hands right-click to our own reply menu instead
-/// of the stock NSTextField one.
+/// The message text.
+///
+/// A text view rather than a label, because a selectable NSTextField does not draw its
+/// own selection: clicking one swaps in the window's field editor, a shared NSTextView
+/// laid over that row, which lays the text out on its own terms. That reflowed the row
+/// and pushed text outside the backdrop, and it stuck, because an overlay window that
+/// ignores the mouse almost never hands first responder back. A text view is the
+/// responder itself, so there is one layout and it never changes.
 @MainActor
-final class DanmakuLabel: NSTextField {
+final class DanmakuTextView: NSTextView {
     var menuProvider: (() -> NSMenu?)?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         menuProvider?()
     }
-}
 
-/// Clicking a selectable NSTextField swaps in the window's field editor — a shared
-/// NSTextView laid over that one row — and the stock one paints an opaque background,
-/// which wipes out the row's translucent backdrop and its text shadow until something
-/// else takes first responder. On an overlay that rarely gives up focus, that is
-/// permanent.
-@MainActor
-final class TransparentFieldEditor: NSTextView {
-    override var drawsBackground: Bool {
-        get { false }
+    /// Selection needs first responder, but the row must not show a focus ring.
+    override var focusRingType: NSFocusRingType {
+        get { .none }
         set { _ = newValue }
-    }
-}
-
-/// Hands out one shared editor, the way a window normally would.
-@MainActor
-final class TransparentFieldEditorProvider {
-    private lazy var editor: TransparentFieldEditor = {
-        let editor = TransparentFieldEditor()
-        editor.isFieldEditor = true
-        editor.backgroundColor = .clear
-        return editor
-    }()
-
-    /// Only danmaku labels get it; anything else in the window keeps the stock editor.
-    func fieldEditor(for object: Any?) -> NSText? {
-        object is DanmakuLabel ? editor : nil
     }
 }
 
@@ -86,7 +69,7 @@ final class TransparentFieldEditorProvider {
 @MainActor
 final class DanmakuMessageRow: DanmakuRow {
     private let message: DanmakuMessage
-    private let label = DanmakuLabel(labelWithString: "")
+    private let label = DanmakuTextView()
     private let avatarView = NSImageView()
     /// Full-image emote or gift icon. Sits after the text, wrapping to its own line if
     /// there is not enough room.
@@ -124,16 +107,19 @@ final class DanmakuMessageRow: DanmakuRow {
 
         label.isSelectable = true
         label.isEditable = false
-        label.isBordered = false
         label.drawsBackground = false
-        // The field editor drops down to plain text unless rich text is allowed, and
-        // then redraws the row in the cell's default font and colour instead of the
-        // attributed string we built.
-        label.allowsEditingTextAttributes = true
-        label.maximumNumberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
-        label.cell?.wraps = true
-        label.cell?.isScrollable = false
+        label.backgroundColor = .clear
+        label.usesFontPanel = false
+        label.allowsUndo = false
+        // A text view pads and insets its text by default; the row already owns its
+        // padding, so both have to go or the text sits off-centre.
+        label.textContainerInset = .zero
+        label.textContainer?.lineFragmentPadding = 0
+        // The row owns the geometry: if the container tracked the view instead, the
+        // width handed to `textSize(forWidth:)` would be ignored and nothing would wrap.
+        label.textContainer?.widthTracksTextView = false
+        label.isHorizontallyResizable = false
+        label.isVerticallyResizable = false
         label.menuProvider = { [weak self] in self?.replyMenu() }
         addSubview(label)
 
@@ -153,21 +139,39 @@ final class DanmakuMessageRow: DanmakuRow {
     }
 
     private func replyMenu() -> NSMenu? {
-        guard let author, onReply != nil else { return nil }
         let menu = NSMenu()
-        let item = NSMenuItem(
-            title: "回复 @\(author)",
-            action: #selector(replyAction),
-            keyEquivalent: ""
-        )
-        item.target = self
-        menu.addItem(item)
+        if let author, onReply != nil {
+            let reply = NSMenuItem(
+                title: "回复 @\(author)",
+                action: #selector(replyAction),
+                keyEquivalent: ""
+            )
+            reply.target = self
+            menu.addItem(reply)
+            menu.addItem(.separator())
+        }
+        let copyItem = NSMenuItem(title: "拷贝", action: #selector(copyText), keyEquivalent: "")
+        copyItem.target = self
+        menu.addItem(copyItem)
         return menu
     }
 
     @objc private func replyAction() {
         guard let author else { return }
         onReply?(author)
+    }
+
+    /// Copies the selection, or the whole message when nothing is selected — right
+    /// clicking without selecting first should still get you the text.
+    @objc private func copyText() {
+        let full = label.string
+        let selected = label.selectedRange()
+        let text = selected.length > 0
+            ? (full as NSString).substring(with: selected)
+            : full
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     override func styleDidChange() {
@@ -211,7 +215,19 @@ final class DanmakuMessageRow: DanmakuRow {
     }
 
     private func applyText() {
-        label.attributedStringValue = attributedContent()
+        label.textStorage?.setAttributedString(attributedContent())
+    }
+
+    /// Lays the text out against a fixed width and reports what it actually used.
+    /// Both measuring and positioning go through here so they cannot disagree.
+    private func textSize(forWidth width: CGFloat) -> NSSize {
+        guard let container = label.textContainer, let manager = label.layoutManager else {
+            return .zero
+        }
+        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        manager.ensureLayout(for: container)
+        let used = manager.usedRect(for: container)
+        return NSSize(width: min(ceil(used.width), width), height: ceil(used.height))
     }
 
     private func attributedContent() -> NSAttributedString {
@@ -304,7 +320,7 @@ final class DanmakuMessageRow: DanmakuRow {
     /// clipped. Character wrapping never overflows but splits ordinary words mid-way, so
     /// it is switched on only for the messages that actually need it.
     private func updateBreakMode(forContentWidth width: CGFloat) {
-        let text = label.attributedStringValue
+        let text = label.attributedString()
         guard text.length > 0 else { return }
 
         // CJK has no spaces, so a long Chinese message counts as one run and ends up
@@ -346,9 +362,7 @@ final class DanmakuMessageRow: DanmakuRow {
         )
 
         updateBreakMode(forContentWidth: contentWidth)
-        label.preferredMaxLayoutWidth = contentWidth
-        var labelSize = label.fittingSize
-        labelSize.width = min(labelSize.width, contentWidth)
+        let labelSize = textSize(forWidth: contentWidth)
 
         var imageSize = NSSize.zero
         if trailingImageView != nil {

@@ -28,28 +28,18 @@ struct DanmakuRenderingTests {
 
     private static let width: CGFloat = 380
 
-    /// Stands in for `HUDWindow`, sharing the one thing under test: which field editor
-    /// a danmaku label is handed.
-    @MainActor
-    final class FieldEditorWindow: NSWindow {
-        private let provider = TransparentFieldEditorProvider()
-        private(set) var handedOutEditor: TransparentFieldEditor?
-
-        override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? {
-            if let editor = provider.fieldEditor(for: object) as? TransparentFieldEditor {
-                handedOutEditor = editor
-                return editor
-            }
-            return super.fieldEditor(createFlag, for: object)
-        }
-    }
-
-    private static func findLabel(in view: NSView) -> DanmakuLabel? {
-        if let label = view as? DanmakuLabel { return label }
+    private static func findLabel(in view: NSView) -> DanmakuTextView? {
+        if let label = view as? DanmakuTextView { return label }
         for subview in view.subviews {
             if let found = findLabel(in: subview) { return found }
         }
         return nil
+    }
+
+    private static func snapshot(_ view: NSView) throws -> Data {
+        let rep = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return try #require(rep.representation(using: .png, properties: [:]))
     }
 
 
@@ -96,20 +86,20 @@ struct DanmakuRenderingTests {
         #expect(height > style.lineHeight * 3)
     }
 
-    /// Clicking a row used to swap in the window's field editor, which painted an opaque
-    /// background over the translucent backdrop and re-rendered the text without its
-    /// colours or shadow — and stuck that way, because an overlay window rarely gives up
-    /// first responder.
-    @Test func selectingTextLeavesTheRowLookingTheSame() throws {
+    /// Clicking a row used to reflow it and push text outside the backdrop, permanently:
+    /// a selectable NSTextField hands rendering to the window's field editor, which lays
+    /// text out on its own terms and stays installed. A text view is the responder
+    /// itself, so selecting must change nothing about the row.
+    @Test func selectingTextLeavesTheRowUnchanged() throws {
         let style = DanmakuStyle()
-        let row = DanmakuMessageRow(message: Self.text("能不能复制这条", by: "观众"), style: style)
-        row.frame = NSRect(
-            x: 0, y: 0,
-            width: Self.width,
-            height: row.fittingHeight(forWidth: Self.width)
+        let row = DanmakuMessageRow(
+            message: Self.text("能不能复制这条，顺便看看换行以后会不会跑出去", by: "观众"),
+            style: style
         )
+        let height = row.fittingHeight(forWidth: Self.width)
+        row.frame = NSRect(x: 0, y: 0, width: Self.width, height: height)
 
-        let window = FieldEditorWindow(
+        let window = NSWindow(
             contentRect: row.frame,
             styleMask: [.borderless],
             backing: .buffered,
@@ -120,16 +110,13 @@ struct DanmakuRenderingTests {
         content.addSubview(row)
         content.layoutSubtreeIfNeeded()
 
+        let before = try Self.snapshot(content)
         let label = try #require(Self.findLabel(in: row))
         #expect(window.makeFirstResponder(label))
+        content.layoutSubtreeIfNeeded()
 
-        // The editor is a live AppKit object that will not render in an off-screen
-        // window, so this asserts the invariant rather than the pixels: whatever the
-        // cell asks for, this editor never paints a background.
-        let editor = try #require(window.handedOutEditor)
-        #expect(!editor.drawsBackground)
-        editor.drawsBackground = true
-        #expect(!editor.drawsBackground)
+        #expect(row.fittingHeight(forWidth: Self.width) == height)
+        #expect(try Self.snapshot(content) == before)
     }
 
     @Test func rowIsNeverShorterThanItsAvatar() {
