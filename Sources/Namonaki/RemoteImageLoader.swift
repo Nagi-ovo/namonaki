@@ -9,7 +9,9 @@ final class RemoteImageLoader {
     static let shared = RemoteImageLoader()
 
     private let cache = NSCache<NSString, NSImage>()
-    private var inFlight: [String: Task<NSImage?, Never>] = [:]
+    /// Carries bytes rather than an NSImage: NSImage is not Sendable, so decoding has to
+    /// happen back on the main actor. Older Swift 6 compilers reject the alternative.
+    private var inFlight: [String: Task<Data?, Never>] = [:]
     private let session: URLSession
 
     private init() {
@@ -37,21 +39,25 @@ final class RemoteImageLoader {
         guard let url = URL(string: urlString), Self.allows(url) else { return }
 
         let task = inFlight[urlString] ?? {
-            let task = Task<NSImage?, Never> { [session] in
+            let task = Task<Data?, Never> { [session] in
                 guard let (data, response) = try? await session.data(from: url),
-                      (response as? HTTPURLResponse)?.statusCode == 200,
-                      let image = NSImage(data: data) else { return nil }
-                return image
+                      (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+                return data
             }
             inFlight[urlString] = task
             return task
         }()
 
         Task { [weak self] in
-            let image = await task.value
+            let data = await task.value
             guard let self else { return }
             self.inFlight[urlString] = nil
-            guard let image else { return }
+            // Callers sharing this download let the first one through decode it.
+            if let ready = self.cached(urlString) {
+                completion(ready)
+                return
+            }
+            guard let data, let image = NSImage(data: data) else { return }
             self.cache.setObject(image, forKey: urlString as NSString)
             completion(image)
         }
