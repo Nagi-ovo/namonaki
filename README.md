@@ -24,7 +24,7 @@ OBS 那边把弹幕铺进画面是给观众看的。这个是给你自己看的�
 - OBS 也要弹幕的话共用同一条连接，拉滑杆两边一起变
 - 关掉重开，最近 40 条还在
 
-## 装
+## 安装
 
 macOS 14 以上。去 [Releases](https://github.com/nagi-studio/namonaki/releases) 下载，
 Apple Silicon 拿 arm64 那个，Intel 或者不确定拿 universal。
@@ -69,7 +69,7 @@ OBS 要用的话，设置页点「复制 OBS 地址」，粘进浏览器源。
 装扮表情（`/bfs/garb/`）在直播里能显示成图，评论区那些基础表情包（小黄脸、热词，`/bfs/emote/`）
 只会显示成 `[xxx]` 文字。B 站的限制，面板里给这类包标了「只出文字」。
 
-## 改 OBS 那个页面
+## 改 OBS 渲染页
 
 桌面弹幕窗是原生画的，不涉及网页。OBS 用的是 `web/` 里的 Svelte 页，产物已经提交在
 `Resources/Renderer`，所以普通编译不用装前端工具。改了 `web/` 才要重建，用 bun：
