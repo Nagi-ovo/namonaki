@@ -37,21 +37,17 @@ jobs:
         run: |
           ./build.sh --universal
           lipo -info build/Namonaki.app/Contents/MacOS/Namonaki
-          cd build
-          ditto -c -k --sequesterRsrc --keepParent Namonaki.app \
-            "Namonaki-${{ steps.v.outputs.version }}-universal.zip"
+          ./make-dmg.sh "build/Namonaki-${{ steps.v.outputs.version }}-universal.dmg"
 
-      # Second pass reuses build/, and build.sh only removes the .app, so the zip
+      # Second pass reuses build/, and build.sh only removes the .app, so the dmg
       # written above survives.
       - name: Build the arm64 package
         run: |
           ./build.sh
           lipo -info build/Namonaki.app/Contents/MacOS/Namonaki
-          cd build
-          ditto -c -k --sequesterRsrc --keepParent Namonaki.app \
-            "Namonaki-${{ steps.v.outputs.version }}-arm64.zip"
+          ./make-dmg.sh "build/Namonaki-${{ steps.v.outputs.version }}-arm64.dmg"
 
       - name: Attach both to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ steps.v.outputs.tag }}" build/*.zip --clobber
+        run: gh release upload "${{ steps.v.outputs.tag }}" build/*.dmg --clobber
